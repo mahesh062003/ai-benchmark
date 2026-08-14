@@ -97,7 +97,7 @@ C:/AI BENCHMARK/
 ├── generation/        # optional Ollama stage
 ├── benchmark/         # corpus, indexer, runner
 ├── dashboard/         # Streamlit app
-├── tests/             # 288 tests
+├── tests/             # 314 tests
 ├── config/            # default.yaml
 ├── cli.py             # single entry point
 ├── docs/METHODOLOGY.md
@@ -184,6 +184,25 @@ in the config for faster iteration.
 
 `inspect` retrieves live and prints the actual chunks with `RELEVANT` /
 `unjudged` labels, so ground-truth mappings can be checked by eye.
+
+Aggregate scores are point estimates. To find out which differences between
+strategies are real, test them:
+
+```bash
+./venv/Scripts/python.exe -m cli significance
+./venv/Scripts/python.exe -m cli significance --dataset cuad --metrics recall,ndcg
+```
+
+Pairwise Wilcoxon signed-rank tests on per-query scores, bootstrap confidence
+intervals for the effect size, and a Holm-Bonferroni correction across the
+three strategy pairs. Queries that are unscoreable under either strategy are
+dropped from that comparison rather than entered as 0.0, so a dataset without
+retrieval ground truth is skipped rather than compared against zeros. Results
+are written to `artifacts/results/significance.csv`.
+
+A confidence interval spanning zero means the observed gap is indistinguishable
+from sampling noise, whatever the point estimates say — which is the case for
+several comparisons in this benchmark.
 
 ### 5. Generation (optional — needs Ollama)
 
@@ -290,7 +309,7 @@ otherwise average together and double the apparent answer count.
 
 ```bash
 ./venv/Scripts/python.exe -m pytest tests/ -m "not slow"   # 167 tests, ~21s
-./venv/Scripts/python.exe -m pytest tests/                 # 236 tests, ~60s
+./venv/Scripts/python.exe -m pytest tests/                 # 314 tests, ~90s
 ```
 
 `slow` tests read the real datasets and skip cleanly if `datasets/` is absent.
@@ -434,11 +453,19 @@ Summarised here; argued in full in [docs/METHODOLOGY.md §11](docs/METHODOLOGY.m
    structurally favours lexical matching.
 5. **CUAD and QASPER are document-scoped**, not open-domain.
 6. **MedQA contributes no retrieval metrics.**
-7. **CUAD coverage is ~0.28** — most clause categories are absent from any
-   given contract (`is_impossible`), and those queries are NULL, not zero.
+7. **CUAD coverage is 0.3205** — 6,702 of 20,910 queries are scoreable. Most
+   clause categories are absent from any given contract (`is_impossible`), and
+   those queries are NULL, not zero. CUAD's effective sample size is 6,702.
 8. **One embedding model** — conclusions about "dense retrieval" are
    conclusions about MiniLM-L6-v2 until the sweep is repeated.
-9. **No significance testing** — differences are point estimates.
+9. **Significance is corrected within a dataset and metric, not across the
+   whole study.** Strategy pairs are compared with Wilcoxon signed-rank tests
+   on per-query scores, with bootstrap confidence intervals for effect size and
+   a Holm-Bonferroni correction over the three pairs (`cli significance`). The
+   correction family is one dataset and one metric — the three pairs a reader
+   compares when reading a single row — so the 45 comparisons in the study are
+   not corrected as one family. A study-wide correction would be defensible and
+   more conservative.
 10. **Faithfulness and hallucination are model-based estimates, not ground
     truth.** Faithfulness measures agreement with one LLM judge, which is not a
     validated rater; hallucination is limited by the cross-encoder's 512-token
