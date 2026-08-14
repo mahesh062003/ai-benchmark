@@ -433,6 +433,14 @@ draws an evenly-allocated sample across every (dataset, method, model) cell, so
 no comparison cell is thin or empty. Unsampled answers keep NULL, which already
 means "not measured" everywhere else in the schema.
 
+The shipped value is **1,440**. With six datasets, three retrieval strategies
+and four models there are 72 cells, so this is 20 judged answers per cell. The
+figure that constrains a claim is the count inside a cell, not the total: a
+larger sample spread over the same 72 cells would raise confidence in the
+overall faithfulness average while leaving any model-versus-model comparison
+just as underpowered. NLI hallucination is cheap enough to run over every
+answer, so that comparison is not subsampled at all.
+
 An unreadable verdict counts as *unsupported*: this can understate faithfulness
 but can never invent support. An answer that decomposes to no factual
 statements ("the context does not answer this") is NULL, not zero — declining

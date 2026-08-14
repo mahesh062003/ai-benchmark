@@ -62,7 +62,12 @@ scoring:
   # Faithfulness is the most expensive measure in the framework, so it is run
   # over a stratified subsample rather than every answer. NLI hallucination is
   # cheap and covers all of them.
-  faithfulness_sample: 600
+  # Drawn as a stratified sample across every (dataset, method, model) cell.
+  # With 6 datasets x 3 strategies x 4 models there are 72 cells, so 1,440 gives
+  # 20 answers per cell. The previous 600 gave about 8, which is too thin to
+  # support a claim that one model is more faithful than another: the sample
+  # size that matters is the one inside a cell, not the total.
+  faithfulness_sample: 1440
   nli_model: cross-encoder/nli-deberta-v3-base
   entail_threshold: 0.5
   nli_batch_size: 32
