@@ -1,0 +1,89 @@
+# Default experiment configuration.
+# Override with: ragbench <command> --config config/default.yaml
+#
+# Paths are relative to the project root, so commands work from the repo root
+# on any machine.
+
+paths:
+  datasets: datasets
+  artifacts: artifacts
+  corpora: artifacts/corpora
+  indexes: artifacts/indexes
+  results: artifacts/results
+  database: artifacts/benchmark.sqlite
+
+# Global chunking default. Adapters override this per dataset (see below and
+# docs/METHODOLOGY.md for the rationale behind each value).
+chunk:
+  strategy: fixed
+  size_tokens: 256
+  overlap_tokens: 64
+  max_tokens: 512
+  min_chunk_chars: 20
+
+retrieval:
+  top_k: 10
+  metric_ks: [1, 5, 10]
+  methods: [bm25, dense, hybrid]
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  rrf_k: 60
+  rrf_candidate_depth: 100
+
+embedding:
+  # Cached locally, 384-dimensional, 256-token input limit -- which is why the
+  # default chunk size is 256 tokens.
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  batch_size: 64
+  device: null        # null -> cuda when available, else cpu
+  normalize: true     # required for FAISS inner product to equal cosine
+
+generation:
+  enabled: false      # retrieval benchmarks never require Ollama
+  model: llama3.1     # single-model `generate` command
+  # Compared by `generate-all`. Each model answers byte-identical context.
+  models: [llama3.1, gemma2, mistral, qwen2.5]
+  host: http://localhost:11434
+  temperature: 0.0    # deterministic: model differences, not sampling noise
+  max_context_chunks: 5
+  timeout_seconds: 120
+  num_predict: 512
+  # 100 questions x 6 datasets x 3 strategies x 4 models = 7,200 generations.
+  # Raised from 50 so each (dataset, strategy, model) cell has enough answers to
+  # compare models rather than merely demonstrate the pipeline.
+  queries_per_dataset: 100
+
+scoring:
+  # One fixed judge rates every model's answers, so faithfulness is comparable
+  # across models rather than each model grading its own output. mistral is the
+  # fastest of the 8B-class models here (~15s warm vs ~23s for llama3.1), which
+  # matters because faithfulness costs two judge calls per answer.
+  judge_model: mistral
+  # Faithfulness is the most expensive measure in the framework, so it is run
+  # over a stratified subsample rather than every answer. NLI hallucination is
+  # cheap and covers all of them.
+  faithfulness_sample: 600
+  nli_model: cross-encoder/nli-deberta-v3-base
+  entail_threshold: 0.5
+  nli_batch_size: 32
+  nli_max_length: 512
+
+seed: 42
+log_level: INFO
+
+datasets:
+  cuad:
+    split: all
+  casehold:
+    split: test
+  medqa:
+    split: test
+    # The full 89 MB textbook corpus. Set max_documents to a small number for
+    # quick runs; leave unset for the real experiment.
+    # max_documents: 3
+  pubmedqa:
+    split: labeled
+  qasper:
+    split: test
+  sciq:
+    split: test

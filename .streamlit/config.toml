@@ -1,0 +1,17 @@
+# Streamlit's own widgets (select boxes, sidebar, tooltips) are themed by
+# Streamlit itself, not by the stylesheet the dashboard injects. Without a dark
+# base here the controls render light against a dark page. These values mirror
+# the palette at the top of dashboard/app.py.
+
+[theme]
+base = "dark"
+backgroundColor = "#0F1117"
+secondaryBackgroundColor = "#161A23"
+primaryColor = "#F0A500"
+textColor = "#EDF0F6"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

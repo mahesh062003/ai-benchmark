@@ -1,14 +1,47 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "ai-benchmark"
-version = "0.1.0"
-description = "RAG retrieval benchmark — COMP702 MSc project"
+name = "ragbench"
+version = "1.0.0"
+description = "Retrieval-strategy benchmark (BM25 / dense / hybrid RRF) across legal, medical and scientific domains -- MSc COMP702"
 requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "pyarrow>=14",          # PubMedQA and QASPER ship as parquet
+    "PyYAML>=6.0",          # configuration files
+    "rank-bm25>=0.2.2",     # BM25 sparse retrieval
+    "faiss-cpu>=1.8",       # dense vector index
+    "sentence-transformers>=3.0",
+    "torch>=2.0",
+    "typer>=0.12",          # CLI
+    "rich>=13.0",           # console output and logging
+    "ollama>=0.3",          # optional generation stage only
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+# The Streamlit results dashboard. Not needed to run the benchmark itself.
+dashboard = ["streamlit>=1.40", "plotly>=5.20"]
+# Static chart export (PNG) for figures; the dashboard renders without it.
+figures = ["kaleido>=0.2"]
+
+[project.scripts]
+ragbench = "cli:main"
+
+[tool.setuptools.packages.find]
+# Flat layout: each stage of the pipeline is its own top-level package.
+include = ["core*", "loaders*", "retrieval*", "evaluation*", "generation*", "benchmark*", "dashboard*"]
+
+[tool.setuptools]
+# cli.py sits at the repository root rather than inside a package.
+py-modules = ["cli"]
 
 [tool.pytest.ini_options]
-testpaths   = ["tests"]
-pythonpath  = ["src"]
-addopts     = "-v --tb=short"
-
-[tool.ruff]
-line-length = 100
-target-version = "py310"
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "slow: tests that load real datasets or embedding models",
+]

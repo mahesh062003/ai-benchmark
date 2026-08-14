@@ -1,63 +1,27 @@
-# ── Python ───────────────────────────────────────────────────────────────────
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
-.eggs/
-*.whl
+# Generated experiment artefacts (corpora, indexes, results, SQLite databases).
+# These are reproducible from the datasets via the documented commands and are
+# far too large to version.
+artifacts/
 
-# ── Virtual environments ──────────────────────────────────────────────────────
-venv/
-.venv/
-env/
-.env/
-
-# ── Research artefacts (large generated files — NOT committed) ────────────────
-results/indexes/*.index
-results/indexes/*.pkl
-results/chunks/*.json
-results/benchmark.db
-results/benchmark_*.db
-
-# ── Datasets (large raw data files — NOT committed) ───────────────────────────
+# Research data is supplied separately and must never be modified or committed.
 datasets/
 
-# ── Secrets / environment ─────────────────────────────────────────────────────
-.env
-.env.*
-secrets.yaml
-*.key
-*.pem
+# Environment
+venv/
+.venv/
 
-# ── Editor / OS artefacts ─────────────────────────────────────────────────────
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# ── Jupyter ───────────────────────────────────────────────────────────────────
-.ipynb_checkpoints/
-*.ipynb
-
-# ── pytest / coverage ─────────────────────────────────────────────────────────
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
 .pytest_cache/
 .coverage
 htmlcov/
-coverage.xml
 
-# ── mypy / linting ────────────────────────────────────────────────────────────
-.mypy_cache/
-.ruff_cache/
-
-# ── Keep results directory structure but not generated files ──────────────────
-!results/.gitkeep
-!results/indexes/.gitkeep
-!results/chunks/.gitkeep
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

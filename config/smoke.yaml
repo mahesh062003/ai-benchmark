@@ -1,0 +1,43 @@
+# Fast smoke configuration: small query samples and a reduced MedQA corpus, so
+# the whole pipeline can be exercised end-to-end in a few minutes.
+# Use config/default.yaml for the real experiment.
+#
+# MedQA is the reason this file exists. Its full corpus is ~67k textbook chunks
+# and embedding them dominates the wall time of a cold run; capping it at two
+# textbooks is what keeps a smoke run to minutes rather than tens of minutes.
+#
+# This config reduces corpora, so run it against a scratch artifacts directory
+# unless you intend to overwrite the full ones:
+#
+#     RAGBENCH_ARTIFACTS_DIR=/tmp/ragbench-smoke \
+#       python -m cli benchmark --all --config config/smoke.yaml
+
+paths:
+  database: artifacts/smoke.sqlite
+
+retrieval:
+  top_k: 10
+  metric_ks: [1, 5, 10]
+  methods: [bm25, dense, hybrid]
+
+datasets:
+  cuad:
+    split: all
+    max_documents: 20      # 20 contracts, ~820 clause queries
+  casehold:
+    split: test
+    max_documents: 500     # ~2,400 pooled holdings
+    max_queries: 200
+  medqa:
+    split: test
+    max_documents: 2       # 2 textbooks instead of 18
+    max_queries: 50
+  pubmedqa:
+    split: labeled
+    max_queries: 200       # full 1,000-abstract corpus retained as distractors
+  qasper:
+    split: val
+    max_documents: 40
+  sciq:
+    split: test
+    max_queries: 200       # full 884-passage corpus retained

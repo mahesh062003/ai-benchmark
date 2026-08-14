@@ -1,21 +1,30 @@
-# Core retrieval
-rank-bm25>=0.2.2
-faiss-cpu>=1.7.4
-sentence-transformers>=2.7.0
+# Runtime dependencies for the retrieval benchmark.
+#
+# The authoritative list is pyproject.toml; this file mirrors it so that a
+# fresh environment can be provisioned with a single pip command on machines
+# where an editable install is inconvenient (Google Colab, Barkla HPC):
+#
+#     pip install -r requirements.txt
+#
+# Retrieval and evaluation run on CPU. Only the optional generation stage
+# needs a GPU, and that is provided by Ollama rather than by this file.
 
-# Data handling
-pandas>=2.0.0
-pyarrow>=14.0.0   # for .parquet
+numpy>=1.26
+pandas>=2.0
+pyarrow>=14              # PubMedQA and QASPER ship as parquet
+PyYAML>=6.0              # configuration files
+rank-bm25>=0.2.2         # BM25 sparse retrieval
+faiss-cpu>=1.8           # dense vector index
+sentence-transformers>=3.0
+torch>=2.0
+typer>=0.12              # CLI
+rich>=13.0               # console output and logging
+ollama>=0.3              # optional generation stage only
 
-# Chunking
-langchain-text-splitters>=0.2.0
+# Tests
+pytest>=8.0
+pytest-cov>=5.0
 
-# LLM generation
-ollama>=0.2.0
-
-# Testing
-pytest>=8.0.0
-pytest-cov>=5.0.0
-
-# Optional: linting
-ruff>=0.4.0
+# Streamlit results dashboard (not needed to run the benchmark itself)
+streamlit>=1.40
+plotly>=5.20

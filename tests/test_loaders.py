@@ -1,215 +1,260 @@
-"""
-Tests for dataset loaders.
+"""Dataset adapters against the real shipped files.
 
-These tests use real dataset files when available, or skip gracefully when files
-are not present (CI environments without large datasets).
+Marked slow: these read the actual dataset directory and skip if it is absent.
+Every adapter and every split it declares is exercised. Counts are asserted
+against the figures recorded during the dataset audit, so a silent change in
+the data or in parsing is caught.
 """
+
+from __future__ import annotations
 
 import pytest
-from pathlib import Path
 
-DATASETS_DIR = Path(__file__).resolve().parent.parent / "datasets"
+from loaders import ADAPTERS, get_adapter
+from core.settings import DatasetConfig
+from core.types import RelevanceClass
 
-
-def _skip_if_missing(path: Path):
-    if not path.exists():
-        pytest.skip(f"Dataset file not found: {path}")
+pytestmark = pytest.mark.slow
 
 
-# ── CUAD ─────────────────────────────────────────────────────────────────────
-
-class TestCUADLoader:
-    CUAD_PATH = DATASETS_DIR / "Legal" / "CUAD" / "CUADv1.json"
-
-    def test_load_corpus_returns_corpus_documents(self):
-        _skip_if_missing(self.CUAD_PATH)
-        from loaders.cuad_loader import load_corpus
-        docs = load_corpus(self.CUAD_PATH)
-        assert len(docs) > 0
-        assert docs[0]["dataset"] == "CUAD"
-        assert docs[0]["domain"]  == "Legal"
-        assert docs[0]["text"]
-        assert docs[0]["doc_id"].startswith("CUAD__")
-
-    def test_corpus_doc_ids_are_unique(self):
-        _skip_if_missing(self.CUAD_PATH)
-        from loaders.cuad_loader import load_corpus
-        docs = load_corpus(self.CUAD_PATH)
-        ids = [d["doc_id"] for d in docs]
-        assert len(ids) == len(set(ids)), "Duplicate doc_ids detected"
-
-    def test_load_samples_has_question_field(self):
-        _skip_if_missing(self.CUAD_PATH)
-        from loaders.cuad_loader import load_samples
-        samples = load_samples(self.CUAD_PATH)
-        assert len(samples) > 0
-        for s in samples[:20]:
-            assert "question" in s
-            assert s["dataset"] == "CUAD"
-
-    def test_answerable_samples_have_retrieval_gt(self):
-        _skip_if_missing(self.CUAD_PATH)
-        from loaders.cuad_loader import load_samples
-        samples = load_samples(self.CUAD_PATH)
-        answerable = [s for s in samples if not s["metadata"]["is_impossible"]]
-        assert all(s["has_retrieval_gt"] for s in answerable)
-
-    def test_impossible_samples_no_retrieval_gt(self):
-        _skip_if_missing(self.CUAD_PATH)
-        from loaders.cuad_loader import load_samples
-        samples = load_samples(self.CUAD_PATH)
-        impossible = [s for s in samples if s["metadata"]["is_impossible"]]
-        assert all(not s["has_retrieval_gt"] for s in impossible)
-
-    def test_source_doc_id_links_sample_to_corpus(self):
-        _skip_if_missing(self.CUAD_PATH)
-        from loaders.cuad_loader import load_corpus, load_samples
-        corpus_ids = {d["doc_id"] for d in load_corpus(self.CUAD_PATH)}
-        samples = load_samples(self.CUAD_PATH)
-        for s in samples[:50]:
-            assert s["source_doc_id"] in corpus_ids
+@pytest.fixture(autouse=True)
+def require_datasets(real_datasets_available):
+    if not real_datasets_available:
+        pytest.skip("datasets/ not present")
 
 
-# ── CaseHOLD ─────────────────────────────────────────────────────────────────
-
-class TestCaseHOLDLoader:
-    TEST_PATH  = DATASETS_DIR / "Legal" / "LexGLUE" / "case_hold" / "case_hold_test.csv"
-    TRAIN_PATH = DATASETS_DIR / "Legal" / "LexGLUE" / "case_hold" / "case_hold_train.csv"
-
-    def test_samples_have_no_retrieval_gt(self):
-        _skip_if_missing(self.TEST_PATH)
-        from loaders.casehold_loader import load_samples
-        samples = load_samples(self.TEST_PATH)
-        assert all(not s["has_retrieval_gt"] for s in samples)
-
-    def test_corpus_from_train_split(self):
-        _skip_if_missing(self.TRAIN_PATH)
-        from loaders.casehold_loader import load_corpus
-        docs = load_corpus(self.TRAIN_PATH)
-        assert len(docs) > 0
-        assert all(d["dataset"] == "CaseHOLD" for d in docs)
-
-    def test_sample_question_is_context(self):
-        _skip_if_missing(self.TEST_PATH)
-        from loaders.casehold_loader import load_samples
-        samples = load_samples(self.TEST_PATH)
-        # question should be the context text
-        assert all(len(s["question"]) > 10 for s in samples[:10])
+def load(config, name, split, **limits):
+    if limits:
+        config.datasets[name] = DatasetConfig(**limits)
+    return get_adapter(name, config).load(split)
 
 
-# ── MedQA ────────────────────────────────────────────────────────────────────
+class TestCUAD:
+    def test_loads_all_contracts(self, config):
+        loaded = load(config, "cuad", "all")
+        assert len(loaded.documents) == 510
+        assert len(loaded.queries) == 20910
 
-class TestMedQALoader:
-    DEV_PATH = DATASETS_DIR / "Medical" / "MedQA" / "questions" / "dev.jsonl"
+    def test_audited_evidence_counts(self, config):
+        loaded = load(config, "cuad", "all")
+        assert loaded.stats["queries_with_evidence"] == 6702
+        assert loaded.stats["queries_is_impossible"] == 14208
+        # Every shipped answer offset reproduced its text exactly.
+        assert loaded.stats["answer_span_mismatches"] == 0
 
-    def test_samples_have_no_retrieval_gt(self):
-        _skip_if_missing(self.DEV_PATH)
-        from loaders.medqa_loader import load_samples
-        samples = load_samples(self.DEV_PATH)
-        assert all(not s["has_retrieval_gt"] for s in samples)
+    def test_spans_reproduce_document_text(self, config):
+        loaded = load(config, "cuad", "all", max_documents=5)
+        by_id = {d.doc_id: d for d in loaded.documents}
+        for query in loaded.queries:
+            for span in query.evidence:
+                assert 0 <= span.start < span.end <= len(by_id[span.doc_id].text)
 
-    def test_sample_has_question_and_options(self):
-        _skip_if_missing(self.DEV_PATH)
-        from loaders.medqa_loader import load_samples
-        samples = load_samples(self.DEV_PATH)
-        assert len(samples) > 0
-        s = samples[0]
-        assert s["question"]
-        assert s["options"]
+    def test_impossible_queries_have_no_evidence(self, config):
+        loaded = load(config, "cuad", "all", max_documents=5)
+        for query in loaded.queries:
+            if query.metadata["is_impossible"]:
+                assert query.evidence == []
+                assert query.has_ground_truth is False
 
-    def test_corpus_is_empty(self):
-        _skip_if_missing(self.DEV_PATH)
-        from loaders.medqa_loader import load_corpus
-        docs = load_corpus(self.DEV_PATH)
-        assert docs == []
+    def test_queries_are_document_scoped(self, config):
+        loaded = load(config, "cuad", "all", max_documents=3)
+        doc_ids = {d.doc_id for d in loaded.documents}
+        assert all(q.scope_doc_id in doc_ids for q in loaded.queries)
 
-
-# ── PubMedQA ─────────────────────────────────────────────────────────────────
-
-class TestPubMedQALoader:
-    DATA_PATH = DATASETS_DIR / "Medical" / "PubMedQA" / "pqa_labeled" / "train_labeled.csv"
-
-    def test_samples_have_retrieval_gt(self):
-        _skip_if_missing(self.DATA_PATH)
-        from loaders.pubmedqa_loader import load_samples
-        samples = load_samples(self.DATA_PATH)
-        assert all(s["has_retrieval_gt"] for s in samples)
-
-    def test_source_doc_id_matches_corpus(self):
-        _skip_if_missing(self.DATA_PATH)
-        from loaders.pubmedqa_loader import load_corpus, load_samples
-        docs    = load_corpus(self.DATA_PATH)
-        samples = load_samples(self.DATA_PATH)
-        corpus_ids = {d["doc_id"] for d in docs}
-        for s in samples[:20]:
-            assert s["source_doc_id"] in corpus_ids
-
-    def test_corpus_doc_ids_unique(self):
-        _skip_if_missing(self.DATA_PATH)
-        from loaders.pubmedqa_loader import load_corpus
-        docs = load_corpus(self.DATA_PATH)
-        ids = [d["doc_id"] for d in docs]
-        assert len(ids) == len(set(ids))
+    def test_rejects_unknown_split(self, config):
+        with pytest.raises(ValueError, match="only the 'all' split"):
+            load(config, "cuad", "train")
 
 
-# ── QASPER ───────────────────────────────────────────────────────────────────
+class TestCaseHOLD:
+    @pytest.mark.parametrize("split,expected", [
+        ("test", 3600), ("validation", 3900), ("train", 45000),
+    ])
+    def test_row_counts_match_audit(self, config, split, expected):
+        loaded = load(config, "casehold", split)
+        assert len(loaded.queries) == expected
 
-class TestQASPERLoader:
-    TRAIN_PATH = DATASETS_DIR / "Scientific" / "qasper" / "train.parquet"
-    TEST_PATH  = DATASETS_DIR / "Scientific" / "qasper" / "test.parquet"
+    def test_every_query_has_exactly_one_gold_holding(self, config):
+        loaded = load(config, "casehold", "test", max_documents=200)
+        assert all(len(q.evidence) == 1 for q in loaded.queries)
 
-    def test_corpus_includes_both_splits(self):
-        _skip_if_missing(self.TRAIN_PATH)
-        _skip_if_missing(self.TEST_PATH)
-        from loaders.qasper_loader import load_corpus
-        docs = load_corpus(train_path=self.TRAIN_PATH, test_path=self.TEST_PATH)
-        assert len(docs) > 0
-        assert all(d["dataset"] == "QASPER" for d in docs)
+    def test_all_five_candidates_enter_the_corpus(self, config):
+        loaded = load(config, "casehold", "test", max_documents=50)
+        doc_ids = {d.doc_id for d in loaded.documents}
+        for query in loaded.queries:
+            assert set(query.metadata["candidate_doc_ids"]) <= doc_ids
+            assert len(query.metadata["candidate_doc_ids"]) == 5
 
-    def test_no_duplicate_doc_ids(self):
-        _skip_if_missing(self.TRAIN_PATH)
-        _skip_if_missing(self.TEST_PATH)
-        from loaders.qasper_loader import load_corpus
-        docs = load_corpus(train_path=self.TRAIN_PATH, test_path=self.TEST_PATH)
-        ids = [d["doc_id"] for d in docs]
-        assert len(ids) == len(set(ids))
+    def test_gold_is_the_labelled_candidate(self, config):
+        loaded = load(config, "casehold", "test", max_documents=50)
+        for query in loaded.queries:
+            expected = query.metadata["candidate_doc_ids"][query.metadata["label"]]
+            assert query.evidence[0].doc_id == expected
 
-    def test_test_samples_have_source_doc_in_corpus(self):
-        _skip_if_missing(self.TRAIN_PATH)
-        _skip_if_missing(self.TEST_PATH)
-        from loaders.qasper_loader import load_corpus, load_samples
-        docs    = load_corpus(train_path=self.TRAIN_PATH, test_path=self.TEST_PATH)
-        samples = load_samples(self.TEST_PATH)
-        corpus_ids = {d["doc_id"] for d in docs}
-        for s in samples[:20]:
-            assert s["source_doc_id"] in corpus_ids
+    def test_identical_holdings_deduplicated(self, config):
+        loaded = load(config, "casehold", "test", max_documents=200)
+        texts = [d.text for d in loaded.documents]
+        assert len(texts) == len(set(texts))
+        assert len(loaded.documents) < 200 * 5
 
 
-# ── SciQ ─────────────────────────────────────────────────────────────────────
+class TestMedQA:
+    @pytest.mark.parametrize("split,expected", [
+        ("test", 1273), ("dev", 1272), ("train", 10178),
+    ])
+    def test_question_counts_match_audit(self, config, split, expected):
+        loaded = load(config, "medqa", split, max_documents=1)
+        assert len(loaded.queries) == expected
 
-class TestSciQLoader:
-    TEST_PATH = DATASETS_DIR / "Scientific" / "SciQ" / "test.csv"
+    def test_no_query_ever_carries_evidence(self, config):
+        loaded = load(config, "medqa", "test", max_documents=1)
+        assert all(q.evidence == [] for q in loaded.queries)
+        assert all(q.has_ground_truth is False for q in loaded.queries)
+        assert loaded.stats["queries_with_evidence"] == 0
 
-    def test_samples_have_retrieval_gt_when_support_exists(self):
-        _skip_if_missing(self.TEST_PATH)
-        from loaders.sciq_loader import load_samples
-        samples = load_samples(self.TEST_PATH)
-        with_support = [s for s in samples if s["evidence"]]
-        assert all(s["has_retrieval_gt"] for s in with_support)
+    def test_relevance_class_is_unsupported(self, config):
+        loaded = load(config, "medqa", "test", max_documents=1, max_queries=5)
+        assert all(
+            q.relevance_class is RelevanceClass.UNSUPPORTED for q in loaded.queries
+        )
 
-    def test_source_doc_id_in_corpus(self):
-        _skip_if_missing(self.TEST_PATH)
-        from loaders.sciq_loader import load_corpus, load_samples
-        docs    = load_corpus(self.TEST_PATH)
-        samples = load_samples(self.TEST_PATH)
-        corpus_ids = {d["doc_id"] for d in docs}
-        for s in samples[:20]:
-            if s["source_doc_id"]:
-                assert s["source_doc_id"] in corpus_ids
+    def test_textbooks_form_the_corpus(self, config):
+        loaded = load(config, "medqa", "test", max_documents=3, max_queries=5)
+        assert len(loaded.documents) == 3
+        # Textbooks are split-independent and labelled as such.
+        assert all(d.split == "textbooks" for d in loaded.documents)
 
-    def test_corpus_ids_unique(self):
-        _skip_if_missing(self.TEST_PATH)
-        from loaders.sciq_loader import load_corpus
-        docs = load_corpus(self.TEST_PATH)
-        ids = [d["doc_id"] for d in docs]
-        assert len(ids) == len(set(ids))
+    def test_options_preserved_for_generation(self, config):
+        loaded = load(config, "medqa", "test", max_documents=1, max_queries=10)
+        for query in loaded.queries:
+            assert len(query.metadata["options"]) == 5
+            assert query.metadata["answer_idx"] in query.metadata["options"]
+            assert query.metadata["options"][query.metadata["answer_idx"]] == query.answer
+
+
+class TestPubMedQA:
+    def test_loads_one_thousand_labelled_records(self, config):
+        loaded = load(config, "pubmedqa", "labeled")
+        assert len(loaded.documents) == 1000
+        assert len(loaded.queries) == 1000
+
+    def test_every_question_maps_to_its_own_abstract(self, config):
+        loaded = load(config, "pubmedqa", "labeled", max_documents=50)
+        by_pubid = {d.metadata["pubid"]: d.doc_id for d in loaded.documents}
+        for query in loaded.queries:
+            assert query.evidence[0].doc_id == by_pubid[query.metadata["pubid"]]
+
+    def test_sections_recorded_as_segments(self, config):
+        loaded = load(config, "pubmedqa", "labeled", max_documents=20)
+        for document in loaded.documents:
+            assert len(document.segments) == document.metadata["n_sections"]
+            for start, end in document.segments:
+                assert document.text[start:end].strip()
+
+    def test_decision_values_are_expected(self, config):
+        loaded = load(config, "pubmedqa", "labeled", max_documents=100)
+        assert {q.answer for q in loaded.queries} <= {"yes", "no", "maybe"}
+
+    def test_rejects_unknown_split(self, config):
+        with pytest.raises(ValueError, match="only the 'labeled' split"):
+            load(config, "pubmedqa", "test")
+
+
+class TestQASPER:
+    @pytest.mark.parametrize("split,papers,questions", [
+        ("val", 281, 1005), ("test", 416, 1451), ("train", 888, 2593),
+    ])
+    def test_counts_match_audit(self, config, split, papers, questions):
+        loaded = load(config, "qasper", split)
+        assert len(loaded.documents) == papers
+        assert len(loaded.queries) == questions
+
+    def test_evidence_text_is_recoverable_from_document(self, config):
+        loaded = load(config, "qasper", "val", max_documents=10)
+        by_id = {d.doc_id: d for d in loaded.documents}
+        checked = 0
+        for query in loaded.queries:
+            for span in query.evidence:
+                extract = by_id[span.doc_id].text[span.start : span.end]
+                assert extract.strip()
+                checked += 1
+        assert checked > 0
+
+    def test_figure_evidence_is_dropped_and_counted(self, config):
+        loaded = load(config, "qasper", "val")
+        assert loaded.stats["evidence_figure_or_table_dropped"] == 253
+        assert loaded.stats["evidence_unmatched_dropped"] == 134
+
+    def test_paragraphs_recorded_as_segments(self, config):
+        loaded = load(config, "qasper", "val", max_documents=5)
+        for document in loaded.documents:
+            assert len(document.segments) > 1
+
+    def test_unanswerable_questions_lack_evidence(self, config):
+        loaded = load(config, "qasper", "val", max_documents=60)
+        unanswerable = [q for q in loaded.queries if not q.metadata["answerable"]]
+        assert unanswerable
+        assert all(q.evidence == [] for q in unanswerable)
+
+
+class TestSciQ:
+    @pytest.mark.parametrize("split,rows,empty", [
+        ("test", 1000, 116), ("validation", 1000, 113), ("train", 11679, 1198),
+    ])
+    def test_counts_and_missing_support_match_audit(self, config, split, rows, empty):
+        loaded = load(config, "sciq", split)
+        assert len(loaded.queries) == rows
+        assert loaded.stats["rows_without_support"] == empty
+
+    def test_rows_without_support_kept_but_unscoreable(self, config):
+        loaded = load(config, "sciq", "test")
+        without = [q for q in loaded.queries if not q.metadata["has_support"]]
+        assert len(without) == 116
+        assert all(q.evidence == [] for q in without)
+        assert all(q.has_ground_truth is False for q in without)
+
+    def test_supports_deduplicated(self, config):
+        loaded = load(config, "sciq", "test")
+        texts = [d.text for d in loaded.documents]
+        assert len(texts) == len(set(texts))
+
+    def test_evidence_covers_whole_support(self, config):
+        loaded = load(config, "sciq", "test")
+        by_id = {d.doc_id: d for d in loaded.documents}
+        for query in loaded.queries[:200]:
+            for span in query.evidence:
+                assert (span.start, span.end) == (0, len(by_id[span.doc_id].text))
+
+
+class TestAllAdapters:
+    @pytest.mark.parametrize("name", sorted(ADAPTERS))
+    def test_default_split_loads(self, config, name):
+        adapter = get_adapter(name, config)
+        config.datasets[name] = DatasetConfig(max_documents=2, max_queries=10)
+        loaded = adapter.load(adapter.default_split())
+        assert len(loaded.queries) > 0
+
+    @pytest.mark.parametrize("name", sorted(ADAPTERS))
+    def test_ids_are_unique(self, config, name):
+        adapter = get_adapter(name, config)
+        config.datasets[name] = DatasetConfig(max_documents=3, max_queries=50)
+        loaded = adapter.load(adapter.default_split())
+        assert len({d.doc_id for d in loaded.documents}) == len(loaded.documents)
+        assert len({q.query_id for q in loaded.queries}) == len(loaded.queries)
+
+    @pytest.mark.parametrize("name", sorted(ADAPTERS))
+    def test_evidence_references_existing_documents(self, config, name):
+        adapter = get_adapter(name, config)
+        config.datasets[name] = DatasetConfig(max_documents=3, max_queries=50)
+        loaded = adapter.load(adapter.default_split())
+        doc_ids = {d.doc_id for d in loaded.documents}
+        for query in loaded.queries:
+            for span in query.evidence:
+                assert span.doc_id in doc_ids
+
+    @pytest.mark.parametrize("name", sorted(ADAPTERS))
+    def test_missing_data_raises_clear_error(self, config, name, tmp_path):
+        config.paths.datasets = str(tmp_path / "nowhere")
+        adapter = get_adapter(name, config)
+        with pytest.raises(FileNotFoundError, match="missing"):
+            adapter.load(adapter.default_split())
