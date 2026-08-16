@@ -310,8 +310,13 @@ def load_significance(db_path: str, mtime: float, resamples: int = 2000) -> pd.D
 
     connection = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
+        # Not simply the latest run: once generation has been run, the newest
+        # run is a generation run and carries no per-query retrieval metrics,
+        # which would empty this tab on a database full of testable results.
         run_id = connection.execute(
-            "SELECT run_id FROM runs ORDER BY created_at DESC LIMIT 1"
+            "SELECT run_id FROM runs"
+            " WHERE run_id IN (SELECT DISTINCT run_id FROM query_metrics)"
+            " ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
         if run_id is None:
             return pd.DataFrame()
@@ -339,6 +344,60 @@ def load_significance(db_path: str, mtime: float, resamples: int = 2000) -> pd.D
             "dataset": c.dataset, "metric": c.metric,
             "method_a": c.method_a, "method_b": c.method_b,
             "n": c.n_pairs, "mean_a": c.mean_a, "mean_b": c.mean_b,
+            "diff": c.mean_diff, "ci_low": c.ci_low, "ci_high": c.ci_high,
+            "p": c.p_corrected, "significant": c.significant,
+            "winner": c.winner or "",
+        }
+        for c in comparisons
+    ])
+
+
+@st.cache_data(show_spinner="Testing model differences…")
+def load_model_significance(db_path: str, mtime: float, resamples: int = 2000) -> pd.DataFrame:
+    """Pairwise model tests on faithfulness and hallucination, Holm-corrected.
+
+    Recomputed from the stored answers for the same reason as the retrieval
+    tests above. Each row records whether it came from the paired or the
+    unpaired test, because faithfulness and hallucination do not cover the same
+    questions and the reader should not have to assume.
+    """
+    import sqlite3 as _sqlite3
+
+    from evaluation.significance import run_model_comparisons
+
+    connection = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        run_id = connection.execute(
+            "SELECT run_id FROM runs"
+            " WHERE run_id IN (SELECT DISTINCT run_id FROM generations)"
+            " ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        if run_id is None:
+            return pd.DataFrame()
+        datasets = [
+            r[0] for r in connection.execute(
+                "SELECT DISTINCT dataset FROM generations WHERE run_id = ? ORDER BY dataset",
+                (run_id[0],)
+            )
+        ]
+        models = [
+            r[0] for r in connection.execute(
+                "SELECT DISTINCT model FROM generations WHERE run_id = ? ORDER BY model",
+                (run_id[0],)
+            )
+        ]
+        comparisons = run_model_comparisons(
+            connection, run_id[0], datasets, models, resamples=resamples,
+        )
+    finally:
+        connection.close()
+
+    return pd.DataFrame([
+        {
+            "dataset": c.dataset, "measure": c.measure,
+            "model_a": c.model_a, "model_b": c.model_b,
+            "test": "paired" if c.test.startswith("wilcoxon") else "unpaired",
+            "n": c.n_used, "mean_a": c.mean_a, "mean_b": c.mean_b,
             "diff": c.mean_diff, "ci_low": c.ci_low, "ci_high": c.ci_high,
             "p": c.p_corrected, "significant": c.significant,
             "winner": c.winner or "",
@@ -634,6 +693,80 @@ def significance_detail(frame: pd.DataFrame) -> str:
     return f'<table class="rb-table">{head}{"".join(body)}</table>'
 
 
+def model_significance_detail(frame: pd.DataFrame) -> str:
+    """Every model-versus-model test, with the test that produced it named.
+
+    The `test` column is shown rather than hidden because faithfulness and
+    hallucination are not measured on the same questions: hallucination covers
+    every answer and is paired, faithfulness is a subsample and is not.
+    """
+    if frame.empty:
+        return '<div class="rb-empty">No model comparisons available.</div>'
+    head = (
+        "<tr><th>Dataset</th><th>Measure</th><th>Comparison</th><th>Test</th>"
+        "<th>n</th><th>Difference</th><th>95% CI</th><th>p (Holm)</th>"
+        "<th>Better model</th></tr>"
+    )
+    body = []
+    for row in frame.to_dict("records"):
+        domain = DATASET_DOMAIN.get(row["dataset"], "unknown")
+        colour = DOMAIN_COLOURS.get(domain, MUTED)
+        badge = (
+            f'<span class="rb-badge" style="background:{colour}1F;color:{colour};">'
+            f'<span class="rb-dot" style="background:{colour};"></span>{row["dataset"]}</span>'
+        )
+        if row["significant"]:
+            verdict = (
+                f'<span style="color:{GOLD};font-weight:600;">{row["winner"]}</span> '
+                f'<span style="color:{MUTED};">{stars(row["p"])}</span>'
+            )
+        else:
+            verdict = '<span class="rb-null-cell">not significant</span>'
+        spans_zero = row["ci_low"] <= 0 <= row["ci_high"]
+        ci_style = ' style="color:#5A6275;"' if spans_zero else ""
+        test_style = "" if row["test"] == "paired" else f' style="color:{MUTED};"'
+        body.append(
+            f'<tr><td>{badge}</td><td>{row["measure"]}</td>'
+            f'<td>{row["model_a"]} vs {row["model_b"]}</td>'
+            f'<td{test_style}>{row["test"]}</td>'
+            f'<td class="rb-num">{row["n"]}</td>'
+            f'<td class="rb-num">{row["diff"]:+.4f}</td>'
+            f'<td class="rb-num"{ci_style}>[{row["ci_low"]:+.3f}, {row["ci_high"]:+.3f}]</td>'
+            f'<td class="rb-num">{row["p"]:.2e}</td><td>{verdict}</td></tr>'
+        )
+    return f'<table class="rb-table">{head}{"".join(body)}</table>'
+
+
+def model_scoreboard(frame: pd.DataFrame) -> str:
+    """How many comparisons each model wins outright, per measure."""
+    if frame.empty:
+        return '<div class="rb-empty">No model comparisons available.</div>'
+    models = sorted(set(frame["model_a"]) | set(frame["model_b"]))
+    measures = list(dict.fromkeys(frame["measure"]))
+    head = "<tr><th>Model</th>" + "".join(
+        f"<th>{m} wins</th>" for m in measures
+    ) + "<th>Total</th></tr>"
+    body = []
+    for model in models:
+        cells, total = [], 0
+        for measure in measures:
+            won = int(
+                ((frame["measure"] == measure) & frame["significant"]
+                 & (frame["winner"] == model)).sum()
+            )
+            total += won
+            shown = (
+                f'<span style="color:{GOLD};font-weight:600;">{won}</span>'
+                if won else '<span class="rb-null-cell">0</span>'
+            )
+            cells.append(f'<td class="rb-num">{shown}</td>')
+        body.append(
+            f"<tr><td>{model}</td>{''.join(cells)}"
+            f'<td class="rb-num"><b>{total}</b></td></tr>'
+        )
+    return f'<table class="rb-table">{head}{"".join(body)}</table>'
+
+
 def card_open(title: str, note: str) -> str:
     return (
         f'<div class="rb-card"><div class="rb-card-head">'
@@ -817,7 +950,16 @@ def main() -> None:
         if domain != "All domains":
             sig = sig[sig["domain"] == domain.lower()]
 
-    tab_overview, tab_significance = st.tabs(["  Overview  ", "  Significance  "])
+    msig_all = load_model_significance(str(db_path), db_path.stat().st_mtime)
+    msig = msig_all.copy()
+    if not msig.empty:
+        msig["domain"] = msig["dataset"].map(DATASET_DOMAIN).fillna("unknown")
+        if domain != "All domains":
+            msig = msig[msig["domain"] == domain.lower()]
+
+    tab_overview, tab_significance, tab_models = st.tabs(
+        ["  Overview  ", "  Retrieval significance  ", "  Model significance  "]
+    )
 
     # ================= OVERVIEW =================
     with tab_overview:
@@ -967,6 +1109,59 @@ def main() -> None:
                 "&ldquo;not significant&rdquo; read as an effect size. "
                 "Datasets with no retrieval ground truth are absent entirely — "
                 "they are not tested against zeros.</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ================= MODEL SIGNIFICANCE =================
+    with tab_models:
+        if msig.empty:
+            st.markdown(
+                '<div class="rb-empty"><b>No model comparisons available.</b><br>'
+                "Comparing models needs scored answers from a generation run."
+                "<br><br><code>python -m cli generate-all</code> then "
+                "<code>python -m cli score-answers</code></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            total = len(msig)
+            confirmed = int(msig["significant"].sum())
+            paired = int((msig["test"] == "paired").sum())
+            st.markdown(
+                f'<div class="rb-insight" style="margin:.2rem 0 1.1rem;">'
+                f'<div class="rb-insight-label">What this tab answers</div>'
+                f'<div class="rb-insight-body">'
+                f"Which <b>model</b> writes better-grounded answers — the counterpart of "
+                f"the retrieval tab, which compares strategies. "
+                f"<b>{confirmed} of {total}</b> comparisons survive Holm correction at α=0.05. "
+                f"{paired} are paired (hallucination is scored for every answer, so models "
+                f"meet on identical questions); the rest are unpaired, because faithfulness "
+                f"is a subsample drawn independently per cell and the models overlap on only "
+                f"about a fifth of their questions. "
+                f"Lower hallucination and higher faithfulness are both better, so the verdict "
+                f"names the better model, not the larger number.</div></div>",
+                unsafe_allow_html=True,
+            )
+
+            st.markdown(
+                card_open("Outright wins", "significant comparisons only")
+                + model_scoreboard(msig) + "</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("<div style='height:.7rem'></div>", unsafe_allow_html=True)
+
+            st.markdown(
+                card_open("All model comparisons", f"{total} tests")
+                + model_significance_detail(msig) + "</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<div style="color:{MUTED};font-size:.72rem;margin-top:.7rem;line-height:1.6;">'
+                "*** p&lt;0.001 &nbsp;·&nbsp; ** p&lt;0.01 &nbsp;·&nbsp; * p&lt;0.05, "
+                "all Holm-corrected within each dataset and measure.<br>"
+                "Faithfulness is judged by one of the models under test, so its rows "
+                "carry a conflict of interest the hallucination rows do not. "
+                "Answers that were never scored are absent rather than counted as zero."
+                "</div>",
                 unsafe_allow_html=True,
             )
 

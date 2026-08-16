@@ -850,6 +850,132 @@ def significance_command(
     console.print(f"[dim]written -> {path}[/dim]")
 
 
+def _latest_generation_run(connection) -> Optional[str]:
+    """The most recent run that has generated answers, or None."""
+    row = connection.execute(
+        "SELECT run_id FROM runs"
+        " WHERE run_id IN (SELECT DISTINCT run_id FROM generations)"
+        " ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
+
+
+@app.command("significance-generation")
+def significance_generation_command(
+    run: Optional[str] = typer.Option(None, "--run", help="Run to test. Defaults to the latest with answers."),
+    dataset: Optional[str] = typer.Option(None, "--dataset", "-d"),
+    measures: str = typer.Option(
+        "faithfulness,hallucination", "--measures", help="Comma-separated."
+    ),
+    resamples: int = typer.Option(10000, "--resamples", help="Bootstrap resamples."),
+    alpha: float = typer.Option(0.05, "--alpha"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Write results to CSV."),
+    config: Optional[str] = ConfigOption,
+) -> None:
+    """Test whether the gaps between models' answer quality are statistically real.
+
+    The retrieval counterpart of this command compares strategies; this one
+    compares models on faithfulness and hallucination, Holm-corrected across the
+    six model pairs within each dataset and measure.
+
+    Hallucination is scored for every answer, so models are compared on the same
+    (strategy, query) units and the test is paired. Faithfulness is scored on a
+    subsample drawn independently per cell, so the two models overlap on only a
+    fraction of their questions and an unpaired test is used instead. Each row
+    records which test produced it.
+    """
+    import csv
+
+    from evaluation.significance import GENERATION_MEASURES, run_model_comparisons
+
+    cfg = _load(config)
+    requested = [m.strip().lower() for m in measures.split(",") if m.strip()]
+    unknown = [m for m in requested if m not in GENERATION_MEASURES]
+    if unknown:
+        console.print(f"[red]unknown measure(s): {', '.join(unknown)}[/red]")
+        raise typer.Exit(code=1)
+
+    with open_database(cfg) as database:
+        connection = database.connection
+        run_id = run or _latest_generation_run(connection)
+        if run_id is None:
+            console.print("[yellow]no run in the database has generated answers[/yellow]")
+            raise typer.Exit(code=1)
+
+        datasets = [dataset] if dataset else [
+            row[0] for row in connection.execute(
+                "SELECT DISTINCT dataset FROM generations WHERE run_id = ? ORDER BY dataset",
+                (run_id,),
+            )
+        ]
+        models = [
+            row[0] for row in connection.execute(
+                "SELECT DISTINCT model FROM generations WHERE run_id = ? ORDER BY model",
+                (run_id,),
+            )
+        ]
+        comparisons = run_model_comparisons(
+            connection, run_id, datasets, models, requested,
+            resamples=resamples, alpha=alpha,
+        )
+
+    if not comparisons:
+        console.print("[yellow]nothing to test[/yellow]")
+        raise typer.Exit(code=1)
+
+    table = Table(title=f"Model significance (run {run_id}, Holm-corrected, alpha={alpha})")
+    for column, justify in (
+        ("dataset", "left"), ("measure", "left"), ("A vs B", "left"),
+        ("test", "left"), ("n", "right"), ("diff", "right"),
+        (f"{int((1 - alpha) * 100)}% CI", "right"), ("p (Holm)", "right"),
+        ("verdict", "left"),
+    ):
+        table.add_column(column, justify=justify, no_wrap=True)
+    previous = None
+    for c in comparisons:
+        verdict = f"[green]{c.winner}[/green]" if c.significant else "[dim]n.s.[/dim]"
+        group = (c.dataset, c.measure)
+        table.add_row(
+            c.dataset if group != previous else "",
+            c.measure if group != previous else "",
+            f"{c.model_a}–{c.model_b}",
+            "paired" if c.test.startswith("wilcoxon") else "unpaired",
+            str(c.n_used), f"{c.mean_diff:+.4f}",
+            f"[{c.ci_low:+.3f},{c.ci_high:+.3f}]",
+            f"{c.p_corrected:.1e}", verdict,
+        )
+        previous = group
+    console.print(table)
+    console.print(
+        "[dim]Lower hallucination is better and higher faithfulness is better, so the "
+        "verdict column names the better model rather than the larger number.[/dim]"
+    )
+
+    if output is not None:
+        path = Path(output).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
+    else:
+        path = cfg.paths.results_dir / "significance_generation.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow([
+            "run_id", "dataset", "measure", "model_a", "model_b", "test",
+            "n_a", "n_b", "n_used", "mean_a", "mean_b", "mean_diff",
+            "ci_low", "ci_high", "p_value", "p_holm", "significant", "winner",
+        ])
+        for c in comparisons:
+            writer.writerow([
+                run_id, c.dataset, c.measure, c.model_a, c.model_b, c.test,
+                c.n_a, c.n_b, c.n_used, f"{c.mean_a:.6f}", f"{c.mean_b:.6f}",
+                f"{c.mean_diff:.6f}", f"{c.ci_low:.6f}", f"{c.ci_high:.6f}",
+                f"{c.p_value:.6g}", f"{c.p_corrected:.6g}",
+                int(c.significant), c.winner or "",
+            ])
+    console.print(f"[dim]written -> {path}[/dim]")
+
+
 @app.command("export")
 def export_command(
     output: Optional[str] = typer.Option(

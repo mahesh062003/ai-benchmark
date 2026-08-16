@@ -204,6 +204,25 @@ A confidence interval spanning zero means the observed gap is indistinguishable
 from sampling noise, whatever the point estimates say — which is the case for
 several comparisons in this benchmark.
 
+The same treatment for models rather than strategies, once answers exist:
+
+```bash
+./venv/Scripts/python.exe -m cli significance-generation
+./venv/Scripts/python.exe -m cli significance-generation --measures hallucination
+```
+
+Hallucination is scored for every answer, so two models are compared on the same
+(strategy, query) units and the test is paired. Faithfulness is scored on a
+subsample drawn independently per cell, so two models overlap on only about a
+fifth of their questions; pairing there would discard most of the data, and an
+unpaired Mann-Whitney U test is used instead. Every row records which test
+produced it. Results are written to
+`artifacts/results/significance_generation.csv`.
+
+Direction is handled per measure: a *lower* hallucination rate is better and a
+*higher* faithfulness score is better, so the verdict column names the better
+model rather than the larger number.
+
 ### 5. Generation (optional — needs Ollama)
 
 Generation is disabled by default and imported nowhere on the retrieval path,
@@ -458,17 +477,28 @@ retrieval ground truth, so it is reported as unmeasured rather than as zero.
 
 ### Generation
 
-Answer quality was measured two ways, and **they disagree**:
+Answer quality was measured two ways, and the point estimates disagree:
 
-| Model | Faithfulness (mistral-judged, n=1,679) | Hallucination (NLI, n=7,033) |
-|---|---|---|
-| mistral | **0.6350** | 0.7904 |
-| llama3.1 | 0.6142 | 0.8215 |
-| gemma2 | 0.6003 | **0.7024** |
-| qwen2.5 | 0.5945 | 0.7455 |
+| Model | Faithfulness (mistral-judged, n=1,679) | Hallucination (NLI, n=7,033) | Significant hallucination wins |
+|---|---|---|---|
+| mistral | **0.6350** | 0.7904 | 1 |
+| llama3.1 | 0.6142 | 0.8215 | 1 |
+| gemma2 | 0.6003 | **0.7024** | **7** |
+| qwen2.5 | 0.5945 | 0.7455 | 5 |
 
 The judge model ranks itself first on the metric it controls and third on the
-independent one. This is reported rather than resolved — see *Limitations*.
+independent one — but **that ordering does not survive testing**. Of the 18
+faithfulness comparisons involving mistral, exactly one reaches significance
+after correction (CUAD, against gemma2, p = 0.038). The apparent self-preference
+is visible in the means and absent from the statistics, so this study reports it
+as unresolved rather than as evidence of bias.
+
+Hallucination is a different picture: 14 of 36 comparisons are significant, and
+gemma2 wins 7 of them — more than any other model. **gemma2 is the least
+hallucinating model in this benchmark, and that conclusion is statistically
+supported.** No such conclusion is available for faithfulness.
+
+Full results in `artifacts/results/significance_generation.csv` (72 comparisons).
 
 ### Reading the results without re-running anything
 
@@ -517,15 +547,21 @@ Summarised here; argued in full in [docs/METHODOLOGY.md §11](docs/METHODOLOGY.m
 12. **The faithfulness judge is also one of the models under test.** mistral
     rates every model's answers and scores highest on faithfulness (0.6350),
     while the independent NLI measure places it third (0.7904) and ranks gemma2
-    first (0.7024). The two instruments nearly invert. Some divergence is
-    expected — they ask different questions — but the judge topping its own
-    metric is the signature of self-preference bias, so cross-model claims in
-    this study lean on hallucination, which uses a supervised model with no
-    stake in the outcome and covers 7,033 answers rather than 1,679.
-13. **No significance testing on the generation half.** The 45 corrected
-    comparisons cover retrieval only; differences in faithfulness and
-    hallucination between models are reported as means without paired tests, so
-    they should be read as descriptive, not as established differences.
+    first (0.7024). Testing resolves this only partly: mistral's advantage is
+    significant in 1 of its 18 faithfulness comparisons, so the ordering is not
+    evidence of self-preference — but neither is it evidence of its absence,
+    since the faithfulness sample is too small to detect a modest bias. Using a
+    judge that is not among the models under test would remove the question
+    entirely and is the right design for future work.
+13. **The faithfulness comparisons are unpaired and underpowered.** The
+    stratified subsample was drawn independently within each (dataset, strategy,
+    model) cell, so two models share only about 20% of their judged questions.
+    Pairing on that overlap would discard three quarters of the data, so model
+    comparisons on faithfulness use Mann-Whitney U on the full samples, which is
+    less powerful than the paired test used everywhere else. Only 3 of 36
+    faithfulness comparisons reach significance, against 14 of 36 for
+    hallucination. Drawing the subsample on a shared set of questions would make
+    the paired test available and is a cheap improvement.
 14. **CaseHOLD has no correctness measure.** Its multiple-choice answers are
     not parsed back into a selected option, so `choice_acc` is NULL and
     `exact_match` is 0.000. The 0.000 reflects the absence of exact string

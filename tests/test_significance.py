@@ -18,10 +18,13 @@ from evaluation.significance import (
     Comparison,
     align,
     bootstrap_ci,
+    compare_models,
     compare_pair,
     holm_bonferroni,
+    load_answer_scores,
     load_per_query,
     run_comparisons,
+    run_model_comparisons,
     wilcoxon_p,
 )
 
@@ -238,3 +241,142 @@ class TestDefaultRunSelection:
         self._add_run(with_runs, "genall-1", "2026-08-15T00:00:00+00:00", "generation-multi-model")
 
         assert _latest_retrieval_run(with_runs) is None
+
+
+@pytest.fixture
+def answers():
+    """An in-memory generations table with only the columns these tests use."""
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE generations (run_id TEXT, dataset TEXT, method TEXT, model TEXT,"
+        " query_id TEXT, faithfulness REAL, hallucination REAL)"
+    )
+    return connection
+
+
+def add_answer(connection, model, query_id, faithfulness=None, hallucination=None,
+               dataset="d", method="bm25"):
+    connection.execute(
+        "INSERT INTO generations VALUES ('r1',?,?,?,?,?,?)",
+        (dataset, method, model, query_id, faithfulness, hallucination),
+    )
+
+
+class TestLoadAnswerScores:
+    def test_unscored_answers_are_absent_rather_than_zero(self, answers):
+        add_answer(answers, "gemma2", "q1", faithfulness=0.8)
+        add_answer(answers, "gemma2", "q2", faithfulness=None)   # never sampled
+
+        scores = load_answer_scores(answers, "r1", "d", "gemma2", "faithfulness")
+
+        assert list(scores.values()) == [0.8]
+        assert "bm25|q2" not in scores, "a NULL score must not become 0.0"
+
+    def test_the_same_query_under_two_strategies_is_two_units(self, answers):
+        add_answer(answers, "gemma2", "q1", hallucination=0.1, method="bm25")
+        add_answer(answers, "gemma2", "q1", hallucination=0.9, method="dense")
+
+        scores = load_answer_scores(answers, "r1", "d", "gemma2", "hallucination")
+
+        assert scores == {"bm25|q1": 0.1, "dense|q1": 0.9}
+
+    def test_an_unknown_measure_is_refused(self, answers):
+        with pytest.raises(ValueError):
+            load_answer_scores(answers, "r1", "d", "gemma2", "accuracy; DROP TABLE")
+
+
+class TestTestSelection:
+    """Paired versus unpaired is decided by how much the samples actually overlap."""
+
+    def test_fully_overlapping_samples_are_tested_paired(self, answers):
+        for i in range(30):
+            add_answer(answers, "gemma2", f"q{i}", hallucination=0.2)
+            add_answer(answers, "mistral", f"q{i}", hallucination=0.8)
+
+        result = compare_models(answers, "r1", "d", "hallucination", "gemma2", "mistral",
+                                resamples=200)
+
+        assert result.test == "wilcoxon-paired"
+        assert result.n_used == 30
+
+    def test_barely_overlapping_samples_are_tested_unpaired(self, answers):
+        """The real faithfulness sample overlaps ~20%; pairing would discard the rest."""
+        for i in range(30):
+            add_answer(answers, "gemma2", f"q{i}", faithfulness=0.2)
+        for i in range(25, 55):
+            add_answer(answers, "mistral", f"q{i}", faithfulness=0.8)
+
+        result = compare_models(answers, "r1", "d", "faithfulness", "gemma2", "mistral",
+                                resamples=200)
+
+        assert result.test == "mann-whitney-unpaired"
+        assert result.n_used == 60, "both samples in full, not the 5 shared questions"
+        assert (result.n_a, result.n_b) == (30, 30)
+
+    def test_a_model_with_no_scored_answers_yields_nothing(self, answers):
+        add_answer(answers, "gemma2", "q1", faithfulness=0.5)
+
+        assert compare_models(answers, "r1", "d", "faithfulness", "gemma2", "mistral") is None
+
+
+class TestDirectionOfWinner:
+    """Lower hallucination is better; higher faithfulness is better."""
+
+    def test_the_lower_hallucination_rate_wins(self, answers):
+        for i in range(40):
+            add_answer(answers, "gemma2", f"q{i}", hallucination=0.2)
+            add_answer(answers, "mistral", f"q{i}", hallucination=0.8)
+
+        result = compare_models(answers, "r1", "d", "hallucination", "gemma2", "mistral",
+                                resamples=200)
+        result.p_corrected = result.p_value
+
+        assert result.mean_diff < 0
+        assert result.winner == "gemma2", "the model that hallucinates less is the better one"
+
+    def test_the_higher_faithfulness_score_wins(self, answers):
+        for i in range(40):
+            add_answer(answers, "gemma2", f"q{i}", faithfulness=0.2)
+            add_answer(answers, "mistral", f"q{i}", faithfulness=0.8)
+
+        result = compare_models(answers, "r1", "d", "faithfulness", "gemma2", "mistral",
+                                resamples=200)
+        result.p_corrected = result.p_value
+
+        assert result.mean_diff < 0
+        assert result.winner == "mistral"
+
+    def test_no_winner_is_named_when_the_gap_is_not_significant(self, answers):
+        for i in range(40):
+            add_answer(answers, "gemma2", f"q{i}", hallucination=0.5)
+            add_answer(answers, "mistral", f"q{i}", hallucination=0.5)
+
+        result = compare_models(answers, "r1", "d", "hallucination", "gemma2", "mistral",
+                                resamples=200)
+        result.p_corrected = result.p_value
+
+        assert result.winner is None
+
+
+class TestRunModelComparisons:
+    def test_one_row_per_model_pair_corrected_within_the_family(self, answers):
+        models = ["gemma2", "llama3.1", "mistral", "qwen2.5"]
+        for rank, model in enumerate(models):
+            for i in range(20):
+                add_answer(answers, model, f"q{i}", hallucination=0.1 * rank)
+
+        results = run_model_comparisons(
+            answers, "r1", ["d"], models, ["hallucination"], resamples=200,
+        )
+
+        assert len(results) == 6, "four models give six pairs"
+        assert all(r.p_corrected >= r.p_value for r in results)
+
+    def test_a_measure_nobody_scored_contributes_nothing(self, answers):
+        for i in range(20):
+            add_answer(answers, "gemma2", f"q{i}", hallucination=0.3)
+            add_answer(answers, "mistral", f"q{i}", hallucination=0.6)
+
+        assert run_model_comparisons(
+            answers, "r1", ["d"], ["gemma2", "mistral"], ["faithfulness"], resamples=200,
+        ) == []

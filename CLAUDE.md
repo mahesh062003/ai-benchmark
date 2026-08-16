@@ -44,34 +44,41 @@ existing database on CPU.
 
 ---
 
+## Significance testing — both halves are covered
+
+`cli significance` compares retrieval strategies (45 comparisons) and
+`cli significance-generation` compares models on answer quality (72). Results in
+`artifacts/results/significance.csv` and `significance_generation.csv`, both
+committed.
+
+The generation side chooses its test per comparison and records which it used:
+hallucination is scored for every answer, so models are paired on the same
+(strategy, query) units; faithfulness is a subsample drawn independently per
+cell with only ~20% overlap between models, so it uses unpaired Mann-Whitney U.
+Direction is per measure — lower hallucination is better, higher faithfulness is
+better — via `HIGHER_IS_BETTER` in `evaluation/significance.py`. Inverting that
+would reverse every conclusion, so it is covered by tests.
+
 ## Known issues — open, in priority order
 
-1. **No significance testing on the generation half.** 45 Holm-corrected tests
-   exist for retrieval and none for faithfulness or hallucination. This is the
-   most valuable remaining work: extend `evaluation/significance.py` to run
-   paired tests between models on per-answer scores.
-
-2. **The judge ranks itself first.** mistral is the faithfulness judge *and*
-   scores highest on faithfulness (0.6350), while the independent NLI measure
-   puts it third (0.7904) and ranks gemma2 first (0.7024). The two instruments
-   nearly invert. Report this as a measured limitation with the numbers
-   attached; prefer hallucination for cross-model claims (larger n, supervised
-   model, no stake in the outcome).
-
-   | model | faithfulness (mistral-judged) | hallucination (NLI) |
-   |---|---|---|
-   | mistral | 0.6350 | 0.7904 |
-   | llama3.1 | 0.6142 | 0.8215 |
-   | gemma2 | 0.6003 | 0.7024 |
-   | qwen2.5 | 0.5945 | 0.7455 |
-
-3. **CaseHOLD has no correctness measure.** `choice_acc` is NULL and
+1. **CaseHOLD has no correctness measure.** `choice_acc` is NULL and
    `exact_match` is 0.000. Either add multiple-choice extraction or state it
    explicitly as a limitation — do not leave it looking like a score of zero.
 
-4. **MedQA hallucination (~0.9) is partly an artifact** of answers citing
+2. **MedQA hallucination (~0.9) is partly an artifact** of answers citing
    textbook passages that do not lexically entail them. Needs framing in the
    write-up, not a code change.
+
+3. **The faithfulness subsample is not shared across models**, which forces the
+   weaker unpaired test and leaves only 3 of 36 comparisons significant against
+   14 of 36 for hallucination. Drawing the subsample on a common set of
+   questions would make the paired test available. Requires re-running scoring
+   on a GPU, so it is a future-work item rather than a fix.
+
+4. **The judge is one of the models under test.** mistral scores highest on the
+   faithfulness metric it judges, but that advantage is significant in only 1 of
+   18 comparisons, so the ordering is neither evidence of self-preference nor
+   evidence against it. A judge outside the model set would settle it.
 
 ---
 
