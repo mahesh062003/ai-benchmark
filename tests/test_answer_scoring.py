@@ -278,6 +278,81 @@ class TestStratifiedSample:
         assert len(keys) == len(set(keys))
 
 
+class TestPairedSample:
+    """The sample used for faithfulness must let models be compared pairwise.
+
+    Drawing each (dataset, method, model) cell independently leaves two models
+    sharing only a fraction of their questions, which forces the weaker
+    unpaired test. These tests pin the property that makes the paired test
+    available: every chosen question is judged for every model.
+    """
+
+    population = staticmethod(TestStratifiedSample.population)
+
+    def test_every_model_is_judged_on_exactly_the_same_questions(self):
+        from generation.runner import paired_sample
+
+        picked = paired_sample(self.population(), 240, seed=42)
+
+        by_model = {}
+        for row in picked:
+            by_model.setdefault(row["model"], set()).add(
+                (row["dataset"], row["method"], row["query_id"])
+            )
+        question_sets = list(by_model.values())
+        assert len(by_model) == 4
+        assert all(qs == question_sets[0] for qs in question_sets)
+
+    def test_the_budget_still_buys_the_requested_number_of_answers(self):
+        from generation.runner import paired_sample
+
+        picked = paired_sample(self.population(), 240, seed=42)
+        assert len(picked) == 240
+
+    def test_every_cell_survives_the_draw(self):
+        from generation.runner import paired_sample
+
+        picked = paired_sample(self.population(), 240, seed=42)
+        cells = {(r["dataset"], r["method"], r["model"]) for r in picked}
+        assert len(cells) == 2 * 3 * 4
+
+    def test_a_question_missing_one_model_is_never_chosen(self):
+        """A partly answered question would reintroduce the imbalance."""
+        from generation.runner import paired_sample
+
+        rows = [r for r in self.population(per_cell=5)
+                if not (r["query_id"] == "q0" and r["model"] == "L3")]
+        picked = paired_sample(rows, 48, seed=5)
+        assert all(r["query_id"] != "q0" for r in picked)
+
+    def test_no_duplicates_are_drawn(self):
+        from generation.runner import paired_sample
+
+        picked = paired_sample(self.population(), 240, seed=3)
+        keys = [(r["dataset"], r["method"], r["model"], r["query_id"]) for r in picked]
+        assert len(keys) == len(set(keys))
+
+    def test_sample_is_deterministic_for_a_seed(self):
+        from generation.runner import paired_sample
+
+        rows = self.population()
+        first = paired_sample(rows, 120, seed=7)
+        second = paired_sample(rows, 120, seed=7)
+        assert first == second
+
+    def test_requesting_more_than_available_returns_everything(self):
+        from generation.runner import paired_sample
+
+        rows = self.population(per_cell=2)
+        assert len(paired_sample(rows, 10_000, seed=1)) == len(rows)
+
+    def test_a_single_model_falls_back_rather_than_returning_nothing(self):
+        from generation.runner import paired_sample
+
+        rows = self.population(models=1, per_cell=50)
+        assert len(paired_sample(rows, 60, seed=1)) == 60
+
+
 def test_scoring_defaults_are_recorded_in_config():
     from core.settings import Config
 

@@ -554,6 +554,14 @@ Summarised here; argued in full in [docs/METHODOLOGY.md §11](docs/METHODOLOGY.m
     rate is an *ungroundedness* rate, not a count of false statements.
 11. **PubMedQA and CUAD use single splits** because no official split ships in
     this distribution.
+> Limitations 12–14 describe the results reported above, which come from the
+> first generation run. The framework has since been changed to remove all
+> three — the judge is now phi3, which is outside the compared set; the
+> faithfulness sample is drawn on questions shared by every model, so the
+> comparison is paired; and the multiple-choice loaders supply their options.
+> Those changes take effect on the next generation run and are **not** reflected
+> in the numbers above, which are reported exactly as they were measured.
+
 12. **The faithfulness judge is also one of the models under test.** mistral
     rates every model's answers and scores highest on faithfulness (0.6350),
     while the independent NLI measure places it third (0.7904) and ranks gemma2

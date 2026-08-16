@@ -77,27 +77,39 @@ were measured against the cached queries. It has been run: CaseHOLD and SciQ
 now carry options, and qrels, documents and chunks hash byte-identically to
 before.
 
-## Known issues — open, in priority order
+## The second run — staged, not yet executed
 
-1. **The reported answers predate the options fix.** CaseHOLD and SciQ
-   `choice_correct` are NULL in the current results and should stay that way —
-   do not rescore existing answers against options the models never saw. A
-   future generation run picks this up automatically.
+Everything needed is committed and tested; only the GPU time is outstanding.
+`notebooks/colab_generation.ipynb` drives it. Three fixes take effect:
 
-2. **The faithfulness subsample is not shared across models**, which forces the
-   weaker unpaired test and leaves only 3 of 36 comparisons significant against
-   14 of 36 for hallucination. Drawing the subsample on a common set of
-   questions would make the paired test available. Requires re-running scoring
-   on a GPU, so it is a future-work item rather than a fix.
+| Fix | Where |
+|---|---|
+| Judge is phi3, outside the compared set | `config/default.yaml` |
+| Faithfulness sample shared across models → paired test | `paired_sample` in `generation/runner.py` |
+| CaseHOLD and SciQ supply options → correctness measure | `build_options` in `loaders/base.py` |
 
-3. **The judge is one of the models under test.** mistral scores highest on the
-   faithfulness metric it judges, but that advantage is significant in only 1 of
-   18 comparisons, so the ordering is neither evidence of self-preference nor
-   evidence against it. A judge outside the model set would settle it.
+Verified on the real data before committing to GPU time: the same 1,440 budget
+moves model-pair overlap from **20.7% to 100%**, with all 72 cells still
+covered.
 
-Both remaining items are fixed by the same future GPU run: score faithfulness on
-a shared question set with a judge outside the model set, and regenerate so the
-multiple-choice datasets get their correctness measure.
+The run produces a **new run id**; the first run stays in the database as a
+record. Scoring and generation significance are pinned to the new id with
+`--run`, so the two runs never mix — the first used a different judge, and
+averaging across them would be meaningless.
+
+Expect ~12–18 hours: ~5 for generation, the rest for faithfulness at two judge
+calls per answer.
+
+## Known issues
+
+1. **The reported results predate all three fixes.** README limitations 12–14
+   describe the first run and are accurate for it. Do not rescore existing
+   answers against options the models never saw, and do not mix faithfulness
+   scores from two different judges.
+
+2. **`score-answers` only fills NULL rows.** Pointing it at a new judge without
+   clearing the column first silently scores nothing. `cli reset-scores
+   --column faithfulness --yes` exists for that and refuses without `--yes`.
 
 ---
 

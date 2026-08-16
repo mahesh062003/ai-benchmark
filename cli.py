@@ -338,7 +338,10 @@ def models_command(
 
 @app.command("generate-all")
 def generate_all_command(
-    dataset: Optional[str] = typer.Option(None, "--dataset", "-d"),
+    dataset: Optional[str] = typer.Option(
+        None, "--dataset", "-d",
+        help="One name, or several comma-separated, e.g. --dataset casehold,sciq.",
+    ),
     all_datasets: bool = typer.Option(True, "--all/--no-all"),
     methods: Optional[str] = typer.Option(None, "--methods", "-m"),
     models: Optional[str] = typer.Option(None, "--models", help="Comma-separated Ollama models."),
@@ -512,16 +515,21 @@ def _score_faithfulness(cfg, database, run, limit, load_chunk_texts, scorer_clas
         console.print("[dim]faithfulness: nothing to score[/dim]")
         return
 
-    from generation.runner import stratified_sample
+    from generation.runner import paired_sample
 
     total = len(rows)
     quota = cfg.scoring.faithfulness_sample
     if quota:
-        rows = stratified_sample(rows, quota, cfg.seed)
+        rows = paired_sample(rows, quota, cfg.seed)
         cells = len({(r["dataset"], r["method"], r["model"]) for r in rows})
+        questions = len({(r["dataset"], r["method"], r["query_id"]) for r in rows})
         console.print(
             f"[cyan]sampling[/cyan] {len(rows)} of {total} unscored answers "
             f"across {cells} (dataset, method, model) cells; the rest keep NULL"
+        )
+        console.print(
+            f"[dim]  {questions} distinct questions, every model judged on each, "
+            f"so models can be compared with a paired test[/dim]"
         )
 
     scorer = scorer_class(cfg.generation, judge_model=cfg.scoring.judge_model)
@@ -848,6 +856,68 @@ def significance_command(
                 int(c.significant), c.winner or "",
             ])
     console.print(f"[dim]written -> {path}[/dim]")
+
+
+@app.command("reset-scores")
+def reset_scores_command(
+    column: str = typer.Option(..., "--column", help="faithfulness or hallucination."),
+    run: Optional[str] = typer.Option(None, "--run", help="Limit to one run."),
+    dataset: Optional[str] = typer.Option(None, "--dataset", "-d", help="Comma-separated."),
+    yes: bool = typer.Option(False, "--yes", help="Required: this discards measurements."),
+    config: Optional[str] = ConfigOption,
+) -> None:
+    """Set a score column back to NULL so it can be measured again.
+
+    ``score-answers`` only fills rows that are NULL, which is what makes it
+    resumable. That also means a re-measurement -- a different judge, a
+    different NLI threshold -- would silently score nothing at all. This clears
+    the column first.
+
+    It discards real measurements, so it refuses to run without ``--yes`` and
+    reports exactly how many rows it cleared. Take a backup first: the answers
+    themselves are untouched, but the scores are not recoverable from here.
+    """
+    if column not in ("faithfulness", "hallucination"):
+        console.print(f"[red]not a scoreable column: {column}[/red]")
+        raise typer.Exit(code=1)
+
+    cfg = _load(config)
+    companion = {
+        "faithfulness": "faithfulness_judge",
+        "hallucination": "hallucination_model",
+    }[column]
+
+    where, params = [f"{column} IS NOT NULL"], []
+    if run:
+        where.append("run_id = ?")
+        params.append(run)
+    if dataset:
+        names = [d.strip() for d in dataset.split(",") if d.strip()]
+        where.append(f"dataset IN ({','.join('?' * len(names))})")
+        params.extend(names)
+    clause = " AND ".join(where)
+
+    with open_database(cfg) as database:
+        connection = database.connection
+        affected = connection.execute(
+            f"SELECT COUNT(*) FROM generations WHERE {clause}", params
+        ).fetchone()[0]
+        if not affected:
+            console.print(f"[dim]no {column} scores to clear[/dim]")
+            return
+        if not yes:
+            console.print(
+                f"[yellow]{affected} {column} scores would be discarded.[/yellow] "
+                "Re-run with --yes to confirm."
+            )
+            raise typer.Exit(code=1)
+        with database.transaction() as conn:
+            conn.execute(
+                f"UPDATE generations SET {column} = NULL, {companion} = NULL,"
+                f" {column}_json = NULL WHERE {clause}",
+                params,
+            )
+    console.print(f"[green]cleared {affected} {column} scores[/green] (answers untouched)")
 
 
 @app.command("refresh-query-metadata")

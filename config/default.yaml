@@ -55,10 +55,16 @@ generation:
 
 scoring:
   # One fixed judge rates every model's answers, so faithfulness is comparable
-  # across models rather than each model grading its own output. mistral is the
-  # fastest of the 8B-class models here (~15s warm vs ~23s for llama3.1), which
-  # matters because faithfulness costs two judge calls per answer.
-  judge_model: mistral
+  # across models rather than each model grading its own output.
+  #
+  # The judge is deliberately NOT one of the models under test. mistral was used
+  # for the first pass and came out top of the metric it was judging, which is
+  # unfalsifiable from inside the experiment: the ordering is equally consistent
+  # with mistral being the most faithful model and with a judge preferring its
+  # own style. phi3 is outside the compared set, so that question does not
+  # arise, and it is smaller than all four, which matters because faithfulness
+  # costs two judge calls per answer and dominates the scoring runtime.
+  judge_model: phi3
   # Faithfulness is the most expensive measure in the framework, so it is run
   # over a stratified subsample rather than every answer. NLI hallucination is
   # cheap and covers all of them.

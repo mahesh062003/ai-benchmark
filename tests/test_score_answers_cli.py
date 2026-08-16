@@ -113,6 +113,23 @@ class TestFaithfulnessSampling:
         ).fetchone()[0]
         assert cells == len(DATASETS) * len(METHODS) * len(MODELS)
 
+    def test_every_model_is_judged_on_the_same_questions(self, populated, config):
+        """What makes the model comparison paired rather than unpaired."""
+        config.scoring.faithfulness_sample = 48
+        _score_faithfulness(config, populated, None, None, fake_chunk_texts, StubFaithfulness)
+
+        rows = populated.connection.execute(
+            "SELECT dataset, method, model, query_id FROM generations "
+            "WHERE faithfulness IS NOT NULL"
+        ).fetchall()
+        by_model = {}
+        for dataset, method, model, query_id in rows:
+            by_model.setdefault(model, set()).add((dataset, method, query_id))
+
+        assert len(by_model) == len(MODELS)
+        reference = next(iter(by_model.values()))
+        assert all(questions == reference for questions in by_model.values())
+
     def test_no_sample_scores_everything(self, populated, config):
         config.scoring.faithfulness_sample = None
         _score_faithfulness(config, populated, None, None, fake_chunk_texts, StubFaithfulness)

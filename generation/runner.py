@@ -296,6 +296,78 @@ def stratified_sample(rows: Sequence, size: int, seed: int, key=None) -> List:
     return picked
 
 
+def paired_sample(rows: Sequence, size: int, seed: int) -> List:
+    """Draw a subsample in which every model is judged on the same questions.
+
+    ``stratified_sample`` fills each (dataset, method, model) cell independently,
+    which spreads the budget evenly but leaves two models sharing only a fraction
+    of their questions -- about a fifth in practice. A comparison between models
+    is then unpaired, and an unpaired test on a few dozen answers per model is
+    too weak to resolve anything.
+
+    This picks the *questions* first and then takes every model's answer to each,
+    so the same budget yields a fully paired comparison. Only questions answered
+    by every model are eligible, because a partly answered question would
+    reintroduce the imbalance this exists to remove.
+
+    The quota is still spread evenly across (dataset, method) cells, and the
+    draw is deterministic given ``seed``. Falls back to ``stratified_sample``
+    when pairing is impossible -- a single model, or no question answered by all
+    of them -- so the caller always gets a usable sample.
+    """
+    if size is None or size >= len(rows):
+        return list(rows)
+    if size <= 0:
+        return []
+
+    models = sorted({row["model"] for row in rows})
+    if len(models) < 2:
+        return stratified_sample(rows, size, seed)
+
+    by_question: Dict[tuple, Dict[str, object]] = {}
+    for row in rows:
+        unit = (row["dataset"], row["method"], row["query_id"])
+        by_question.setdefault(unit, {})[row["model"]] = row
+
+    complete = {
+        unit: answers
+        for unit, answers in by_question.items()
+        if len(answers) == len(models)
+    }
+    if not complete:
+        return stratified_sample(rows, size, seed)
+
+    cells: Dict[tuple, List[tuple]] = {}
+    for unit in complete:
+        cells.setdefault((unit[0], unit[1]), []).append(unit)
+    rng = random.Random(seed)
+    for members in cells.values():
+        members.sort()
+        rng.shuffle(members)
+
+    # The budget counts answers, and each chosen question costs one answer per
+    # model, so the number of questions affordable is the budget divided by the
+    # model count.
+    wanted = max(1, size // len(models))
+    order = sorted(cells)
+    cursor = {name: 0 for name in order}
+    chosen: List[tuple] = []
+    while len(chosen) < wanted:
+        progressed = False
+        for name in order:
+            if len(chosen) == wanted:
+                break
+            index = cursor[name]
+            if index < len(cells[name]):
+                chosen.append(cells[name][index])
+                cursor[name] = index + 1
+                progressed = True
+        if not progressed:
+            break
+
+    return [complete[unit][model] for unit in chosen for model in models]
+
+
 def load_chunk_texts(config: Config, dataset: str, needed: set) -> Dict[str, str]:
     """Map chunk_id -> text for ``needed`` ids, streamed from the saved corpus.
 
