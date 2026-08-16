@@ -44,7 +44,7 @@ from core.types import (
     RelevanceClass,
     SourceDocument,
 )
-from .base import DatasetAdapter, LoadedSplit
+from .base import DatasetAdapter, LoadedSplit, build_options
 
 log = get_logger("adapters.sciq")
 
@@ -125,6 +125,14 @@ class SciQAdapter(DatasetAdapter):
                 n_empty_support += 1
                 skips.skip("row_has_empty_support_no_ground_truth")
 
+            correct = (row.get("correct_answer") or "").strip()
+            distractors = [
+                (row.get(f"distractor{i}") or "").strip() for i in (1, 2, 3)
+            ]
+            options, gold_key = build_options(
+                correct, distractors, seed=f"sciq-{split}-{index}"
+            )
+
             queries.append(
                 Query(
                     query_id=make_query_id("sciq", split, f"{index:05d}"),
@@ -134,13 +142,16 @@ class SciQAdapter(DatasetAdapter):
                     scope_doc_id=None,
                     evidence=evidence,
                     relevance_class=RelevanceClass.DERIVED,
-                    answer=(row.get("correct_answer") or "").strip() or None,
+                    answer=correct or None,
                     metadata={
                         "row_index": index,
-                        "correct_answer": (row.get("correct_answer") or "").strip(),
-                        "distractors": [
-                            (row.get(f"distractor{i}") or "").strip() for i in (1, 2, 3)
-                        ],
+                        "correct_answer": correct,
+                        "distractors": distractors,
+                        # Consumed by the generation stage: `options` is rendered
+                        # into the prompt and `answer_idx` is the key scored
+                        # against. Both are absent when the row is malformed, so
+                        # choice accuracy stays NULL rather than becoming 0.
+                        **({"options": options, "answer_idx": gold_key} if options else {}),
                         "has_support": bool(support),
                         "answer_type": "multiple_choice",
                     },

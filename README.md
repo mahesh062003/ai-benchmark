@@ -522,7 +522,17 @@ Summarised here; argued in full in [docs/METHODOLOGY.md §11](docs/METHODOLOGY.m
 4. **SciQ is easy by construction** (questions written from their supports) and
    structurally favours lexical matching.
 5. **CUAD and QASPER are document-scoped**, not open-domain.
-6. **MedQA contributes no retrieval metrics.**
+6. **MedQA contributes no retrieval metrics**, and its near-ceiling
+   hallucination rate must be read as ungroundedness rather than error. MedQA
+   scores 0.9854 on hallucination while answering 0.5058 of its questions
+   correctly, which is not a contradiction: the questions are board-exam items
+   whose answers are not stated in the retrieved textbook passages, so the
+   models answer from parametric knowledge and almost every sentence is
+   unentailed by the context. MedQA is the one dataset here carrying both an
+   independent correctness measure and a near-ceiling hallucination rate, which
+   makes it the clearest demonstration that the two measure different things —
+   a model can be right and ungrounded at the same time. Nothing in this study
+   claims MedQA answers are wrong 98% of the time.
 7. **CUAD coverage is 0.3205** — 6,702 of 20,910 queries are scoreable. Most
    clause categories are absent from any given contract (`is_impossible`), and
    those queries are NULL, not zero. CUAD's effective sample size is 6,702.
@@ -562,11 +572,16 @@ Summarised here; argued in full in [docs/METHODOLOGY.md §11](docs/METHODOLOGY.m
     faithfulness comparisons reach significance, against 14 of 36 for
     hallucination. Drawing the subsample on a shared set of questions would make
     the paired test available and is a cheap improvement.
-14. **CaseHOLD has no correctness measure.** Its multiple-choice answers are
-    not parsed back into a selected option, so `choice_acc` is NULL and
-    `exact_match` is 0.000. The 0.000 reflects the absence of exact string
-    matches against a free-text reference, not measured incorrectness, and no
-    accuracy claim is made for CaseHOLD generation.
+14. **CaseHOLD and SciQ have no correctness measure in the results reported
+    here.** Both are multiple-choice datasets, but only MedQA supplied its
+    candidate options to the generation stage, so both were answered as
+    open-ended questions and `choice_correct` is NULL for them. CaseHOLD's
+    `exact_match` of 0.004 is the rate at which free-text prose happened to
+    equal a holding verbatim; it is not an accuracy figure and is not reported
+    as one. The loaders now supply options for all three multiple-choice
+    datasets, so a future generation run measures all of them — but the answers
+    in this study were produced before that, and are reported as they were
+    measured rather than rescored after the fact.
 
 ---
 

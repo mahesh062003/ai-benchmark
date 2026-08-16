@@ -59,26 +59,45 @@ Direction is per measure — lower hallucination is better, higher faithfulness 
 better — via `HIGHER_IS_BETTER` in `evaluation/significance.py`. Inverting that
 would reverse every conclusion, so it is covered by tests.
 
+## Multiple-choice options
+
+MedQA was the only dataset supplying `options` and `answer_idx` in its query
+metadata, so it was the only one with a correctness measure; CaseHOLD and SciQ
+were answered open-ended and their `choice_correct` is NULL throughout the
+reported results. The loaders now build options for all three via
+`build_options` in `loaders/base.py`, which shuffles candidates on a per-query
+seed — source order always puts the correct answer first, and a model replying
+"A" every time would otherwise score 100%.
+
+Queries are cached beside each corpus and reloaded, so a loader change does not
+reach an existing build on its own. `cli refresh-query-metadata` rewrites only
+the metadata field, aborting if the query text, evidence, answer or relevance
+class disagrees with the adapter, since the retrieval results in the database
+were measured against the cached queries. It has been run: CaseHOLD and SciQ
+now carry options, and qrels, documents and chunks hash byte-identically to
+before.
+
 ## Known issues — open, in priority order
 
-1. **CaseHOLD has no correctness measure.** `choice_acc` is NULL and
-   `exact_match` is 0.000. Either add multiple-choice extraction or state it
-   explicitly as a limitation — do not leave it looking like a score of zero.
+1. **The reported answers predate the options fix.** CaseHOLD and SciQ
+   `choice_correct` are NULL in the current results and should stay that way —
+   do not rescore existing answers against options the models never saw. A
+   future generation run picks this up automatically.
 
-2. **MedQA hallucination (~0.9) is partly an artifact** of answers citing
-   textbook passages that do not lexically entail them. Needs framing in the
-   write-up, not a code change.
-
-3. **The faithfulness subsample is not shared across models**, which forces the
+2. **The faithfulness subsample is not shared across models**, which forces the
    weaker unpaired test and leaves only 3 of 36 comparisons significant against
    14 of 36 for hallucination. Drawing the subsample on a common set of
    questions would make the paired test available. Requires re-running scoring
    on a GPU, so it is a future-work item rather than a fix.
 
-4. **The judge is one of the models under test.** mistral scores highest on the
+3. **The judge is one of the models under test.** mistral scores highest on the
    faithfulness metric it judges, but that advantage is significant in only 1 of
    18 comparisons, so the ordering is neither evidence of self-preference nor
    evidence against it. A judge outside the model set would settle it.
+
+Both remaining items are fixed by the same future GPU run: score faithfulness on
+a shared question set with a judge outside the model set, and regenerate so the
+multiple-choice datasets get their correctness measure.
 
 ---
 

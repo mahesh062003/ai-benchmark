@@ -850,6 +850,67 @@ def significance_command(
     console.print(f"[dim]written -> {path}[/dim]")
 
 
+@app.command("refresh-query-metadata")
+def refresh_query_metadata_command(
+    datasets: Optional[str] = typer.Option(
+        None, "--datasets", help="Comma-separated. Default: every cached corpus."
+    ),
+    config: Optional[str] = ConfigOption,
+) -> None:
+    """Bring cached query metadata up to date with the dataset adapters.
+
+    A corpus build caches its queries, so a loader change that adds metadata --
+    multiple-choice options, for instance -- does not reach an existing build,
+    and the next generation run would silently behave as though the change had
+    never been made. This rewrites only the metadata field.
+
+    Anything that could change a measurement is compared against the adapter
+    first and a disagreement aborts the whole command, because the retrieval
+    results already in the database were measured against the cached queries.
+    Documents, chunks and qrels are never touched.
+    """
+    from benchmark.corpus import QueryMismatch, refresh_query_metadata
+
+    cfg = _load(config)
+    wanted = (
+        [d.strip() for d in datasets.split(",") if d.strip()] if datasets else None
+    )
+
+    builds = []
+    corpora = cfg.paths.corpora_dir
+    if corpora.exists():
+        for dataset_dir in sorted(p for p in corpora.iterdir() if p.is_dir()):
+            if wanted and dataset_dir.name not in wanted:
+                continue
+            for split_dir in sorted(p for p in dataset_dir.iterdir() if p.is_dir()):
+                for build_dir in sorted(p for p in split_dir.iterdir() if p.is_dir()):
+                    builds.append((dataset_dir.name, split_dir.name, build_dir.name))
+    if not builds:
+        console.print("[yellow]no cached corpora found[/yellow]")
+        raise typer.Exit(code=1)
+
+    table = Table(title="Cached query metadata")
+    for column in ("dataset", "split", "queries", "updated"):
+        table.add_column(column, justify="right" if column != "dataset" else "left")
+    total = 0
+    for dataset, split, fingerprint in builds:
+        try:
+            stats = refresh_query_metadata(cfg, dataset, split, fingerprint)
+        except QueryMismatch as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1)
+        total += stats["updated"]
+        updated = (
+            f"[green]{stats['updated']}[/green]" if stats["updated"] else "[dim]0[/dim]"
+        )
+        table.add_row(dataset, split, str(stats["queries"]), updated)
+    console.print(table)
+    console.print(
+        f"[dim]{total} queries updated. Documents, chunks and qrels untouched, so "
+        "existing retrieval results remain valid.[/dim]"
+    )
+
+
 def _latest_generation_run(connection) -> Optional[str]:
     """The most recent run that has generated answers, or None."""
     row = connection.execute(

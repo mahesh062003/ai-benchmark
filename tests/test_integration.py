@@ -6,6 +6,7 @@ milliseconds. Real-data tests are marked slow.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -14,7 +15,13 @@ from loaders import ADAPTERS, get_adapter
 from loaders.base import DatasetAdapter, LoadedSplit
 from benchmark.runner import run_retrieval_benchmark
 from core.settings import ChunkConfig, DatasetConfig
-from benchmark.corpus import build_corpus, load_corpus, save_corpus
+from benchmark.corpus import (
+    QueryMismatch,
+    build_corpus,
+    load_corpus,
+    refresh_query_metadata,
+    save_corpus,
+)
 from core.db import Database
 from core.logging_setup import SkipLog
 from core.types import (
@@ -131,6 +138,57 @@ class TestPipeline:
         assert unavailable.available is False
         assert unavailable.relevant_chunk_ids == []
         assert unavailable.reason
+
+    def test_refresh_updates_metadata_and_leaves_ground_truth_alone(
+        self, config, fake_dataset
+    ):
+        """A loader that gains metadata must reach an already-built corpus.
+
+        Queries are cached on disk and reloaded, so without this a loader
+        improvement is invisible to the next generation run.
+        """
+        build = build_corpus(config, "fake", "test")
+        directory = save_corpus(config, build)
+        qrels_before = (directory / "qrels.jsonl").read_bytes()
+        chunks_before = (directory / "chunks.jsonl").read_bytes()
+
+        class WithOptions(FakeAdapter):
+            def load(self, split: str = "test") -> LoadedSplit:
+                loaded = super().load(split)
+                for query in loaded.queries:
+                    query.metadata["options"] = {"A": "first", "B": "second"}
+                return loaded
+
+        ADAPTERS["fake"] = WithOptions
+        stats = refresh_query_metadata(config, "fake", "test", build.fingerprint)
+
+        assert stats["updated"] == stats["queries"]
+        assert (directory / "qrels.jsonl").read_bytes() == qrels_before
+        assert (directory / "chunks.jsonl").read_bytes() == chunks_before
+        restored = load_corpus(config, "fake", "test", build.fingerprint)
+        assert all(q.metadata["options"] == {"A": "first", "B": "second"}
+                   for q in restored.queries)
+
+    def test_refresh_refuses_when_the_evidence_itself_changed(self, config, fake_dataset):
+        """Rewriting there would invalidate results already in the database."""
+        build = build_corpus(config, "fake", "test")
+        directory = save_corpus(config, build)
+        before = (directory / "queries.jsonl").read_bytes()
+
+        class MovedEvidence(FakeAdapter):
+            def load(self, split: str = "test") -> LoadedSplit:
+                loaded = super().load(split)
+                loaded.queries[0] = dataclasses.replace(
+                    loaded.queries[0], evidence=[EvidenceSpan("fake/test/d3", 0, 5)]
+                )
+                return loaded
+
+        ADAPTERS["fake"] = MovedEvidence
+        with pytest.raises(QueryMismatch, match="more than metadata"):
+            refresh_query_metadata(config, "fake", "test", build.fingerprint)
+
+        assert (directory / "queries.jsonl").read_bytes() == before, \
+            "nothing may be written when the check fails"
 
     def test_corpus_round_trip(self, config, fake_dataset):
         build = build_corpus(config, "fake", "test")

@@ -6,11 +6,15 @@ on a machine with no Ollama installed.
 
 Implemented answer-quality measures
 -----------------------------------
-``choice_correct``  For the multiple-choice datasets (MedQA, SciQ, and
-                    CaseHOLD's labelled candidate) the generated answer is
-                    matched to an option and compared with the gold option.
-                    This is a real, checkable measure that needs no retrieval
-                    ground truth, which is what makes MedQA evaluable.
+``choice_correct``  For the multiple-choice datasets -- MedQA, SciQ and
+                    CaseHOLD, each of which supplies ``options`` and
+                    ``answer_idx`` in its query metadata -- the generated
+                    answer is matched to an option and compared with the gold
+                    option. This is a real, checkable measure that needs no
+                    retrieval ground truth, which is what makes MedQA
+                    evaluable. A dataset supplying neither leaves the column
+                    NULL: nothing is scored wrong merely because it was never
+                    asked as a choice.
 ``exact_match``     Normalised string equality against the reference answer,
                     for datasets with a short free-text answer (PubMedQA's
                     yes/no/maybe decision).

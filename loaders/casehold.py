@@ -58,7 +58,7 @@ from core.types import (
     RelevanceClass,
     SourceDocument,
 )
-from .base import DatasetAdapter, LoadedSplit
+from .base import DatasetAdapter, LoadedSplit, OPTION_KEYS
 
 log = get_logger("adapters.casehold")
 
@@ -193,6 +193,16 @@ class CaseHOLDAdapter(DatasetAdapter):
                         "row_index": index,
                         "label": label,
                         "candidate_doc_ids": document_ids,
+                        # The five candidate holdings, labelled for the
+                        # generation stage. Source order is kept rather than
+                        # shuffled: CaseHOLD already varies which position
+                        # holds the correct answer, so re-ordering would only
+                        # break correspondence with `label` and
+                        # `candidate_doc_ids` for no gain.
+                        "options": {
+                            OPTION_KEYS[i]: ending for i, ending in enumerate(endings)
+                        },
+                        "answer_idx": OPTION_KEYS[label],
                         "has_holding_mask": "<HOLDING>" in context,
                         "answer_type": "multiple_choice",
                     },

@@ -206,6 +206,66 @@ def _read_jsonl(path: Path):
                 yield json.loads(line)
 
 
+class QueryMismatch(RuntimeError):
+    """A cached corpus disagrees with its adapter about the queries themselves."""
+
+
+def refresh_query_metadata(
+    config: Config, dataset: str, split: str, fingerprint: str
+) -> Dict[str, int]:
+    """Update the query metadata cached beside a corpus, changing nothing else.
+
+    A corpus build stores its queries on disk and reloads them, so a loader
+    improvement that adds metadata -- multiple-choice options, say -- has no
+    effect on an existing build. Rebuilding would work but rewrites hundreds of
+    megabytes of documents and chunks that have not changed.
+
+    Only the ``metadata`` field is rewritten. Everything that could alter a
+    measurement -- the query set and its order, the evidence spans, the
+    reference answers, the relevance classes -- is compared against the adapter
+    first and any disagreement raises rather than being written, because a
+    silent change there would invalidate the retrieval results already in the
+    database. Documents, chunks and qrels are not touched at all.
+    """
+    directory = build_directory(config, dataset, split, fingerprint)
+    path = directory / "queries.jsonl"
+    if not path.exists():
+        raise FileNotFoundError(f"no cached corpus at {directory}")
+
+    cached = list(_read_jsonl(path))
+    adapter = get_adapter(dataset, config)
+    fresh = {q.query_id: q for q in adapter.load(split).queries}
+
+    changed = 0
+    rows = []
+    for row in cached:
+        query = fresh.get(row["query_id"])
+        if query is None:
+            raise QueryMismatch(
+                f"{dataset}/{split}: {row['query_id']} is cached but the adapter "
+                "no longer produces it; the corpus needs a full rebuild"
+            )
+        evidence = [[e.doc_id, e.start, e.end] for e in query.evidence]
+        if (
+            evidence != row["evidence"]
+            or query.answer != row.get("answer")
+            or query.relevance_class.value != row["relevance_class"]
+            or query.text != row["text"]
+        ):
+            raise QueryMismatch(
+                f"{dataset}/{split}: {row['query_id']} differs in more than metadata; "
+                "refusing to rewrite, because the retrieval results were measured "
+                "against the cached version"
+            )
+        if row.get("metadata") != query.metadata:
+            changed += 1
+        rows.append({**row, "metadata": query.metadata})
+
+    if changed:
+        _write_jsonl(path, rows)
+    return {"queries": len(rows), "updated": changed}
+
+
 def save_corpus(config: Config, build: CorpusBuild) -> Path:
     directory = build_directory(config, build.dataset, build.split, build.fingerprint)
     directory.mkdir(parents=True, exist_ok=True)

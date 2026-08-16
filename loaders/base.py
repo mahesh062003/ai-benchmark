@@ -3,13 +3,48 @@
 from __future__ import annotations
 
 import abc
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from core.settings import ChunkConfig, Config
 from core.logging_setup import SkipLog
 from core.types import DatasetSpec, Query, SourceDocument
+
+OPTION_KEYS = "ABCDEFGH"
+
+
+def build_options(
+    correct: str, distractors: Sequence[str], seed: str
+) -> Tuple[Dict[str, str], Optional[str]]:
+    """Label a correct answer and its distractors as a multiple-choice set.
+
+    The generation stage renders ``options`` into the prompt and scores the
+    model's chosen letter against ``answer_idx``. Both live in query metadata,
+    so a dataset that supplies them gets choice accuracy and one that does not
+    leaves it NULL.
+
+    Candidates are shuffled rather than left in source order, because source
+    order always puts the correct answer first and a model that always replied
+    "A" would score 100%. The shuffle is seeded per query so the order is
+    identical on every run: the frozen task sets that let several models answer
+    byte-identical prompts depend on it.
+
+    Returns ``({}, None)`` when there is no usable answer, which keeps choice
+    accuracy NULL rather than scoring an unanswerable question as wrong.
+    """
+    correct = (correct or "").strip()
+    candidates = [c for c in (correct, *distractors) if (c or "").strip()]
+    if not correct or len(candidates) < 2:
+        return {}, None
+    candidates = candidates[: len(OPTION_KEYS)]
+
+    shuffled = list(candidates)
+    random.Random(seed).shuffle(shuffled)
+    options = {OPTION_KEYS[i]: text for i, text in enumerate(shuffled)}
+    gold_key = next(key for key, text in options.items() if text == correct)
+    return options, gold_key
 
 
 @dataclass

@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from loaders import ADAPTERS, get_adapter
+from loaders.base import build_options
 from core.settings import DatasetConfig
 from core.types import RelevanceClass
 
@@ -224,6 +225,69 @@ class TestSciQ:
         for query in loaded.queries[:200]:
             for span in query.evidence:
                 assert (span.start, span.end) == (0, len(by_id[span.doc_id].text))
+
+    def test_options_are_supplied_so_choice_accuracy_can_be_scored(self, config):
+        loaded = load(config, "sciq", "test")
+        for query in loaded.queries[:200]:
+            options = query.metadata["options"]
+            gold = query.metadata["answer_idx"]
+            assert 2 <= len(options) <= 4
+            assert options[gold] == query.metadata["correct_answer"]
+
+    def test_the_correct_answer_is_not_always_the_first_option(self, config):
+        """Source order puts it first every time; an unshuffled set scores a
+        model that always answers "A" at 100%."""
+        loaded = load(config, "sciq", "test")
+        gold_keys = {q.metadata["answer_idx"] for q in loaded.queries[:200]}
+        assert len(gold_keys) > 1
+
+    def test_option_order_is_identical_across_loads(self, config):
+        """Frozen task sets require every run to build the same prompt."""
+        first = load(config, "sciq", "test").queries[:50]
+        second = load(config, "sciq", "test").queries[:50]
+        assert [q.metadata["options"] for q in first] == [
+            q.metadata["options"] for q in second
+        ]
+
+
+class TestBuildOptions:
+    """The shared multiple-choice helper, away from any dataset on disk."""
+
+    def test_an_answer_with_no_distractors_is_not_a_choice_question(self):
+        assert build_options("water", [], seed="s") == ({}, None)
+
+    def test_a_missing_answer_leaves_the_question_unscoreable(self):
+        options, gold = build_options("", ["a", "b", "c"], seed="s")
+        assert (options, gold) == ({}, None), "no answer must not score as wrong"
+
+    def test_blank_distractors_are_dropped_rather_than_labelled(self):
+        options, gold = build_options("water", ["ice", "", "  "], seed="s")
+        assert sorted(options.values()) == ["ice", "water"]
+        assert options[gold] == "water"
+
+    def test_the_gold_key_always_points_at_the_correct_answer(self):
+        for i in range(50):
+            options, gold = build_options("right", ["w1", "w2", "w3"], seed=f"s{i}")
+            assert options[gold] == "right"
+
+    def test_the_same_seed_gives_the_same_order(self):
+        assert build_options("a", ["b", "c"], seed="x") == build_options(
+            "a", ["b", "c"], seed="x"
+        )
+
+
+class TestCaseHOLDOptions:
+    def test_every_candidate_holding_is_offered(self, config):
+        loaded = load(config, "casehold", "test", max_queries=100)
+        for query in loaded.queries[:100]:
+            options = query.metadata["options"]
+            assert len(options) == 5
+            assert options[query.metadata["answer_idx"]] == query.answer
+
+    def test_the_gold_key_tracks_the_dataset_label(self, config):
+        loaded = load(config, "casehold", "test", max_queries=100)
+        for query in loaded.queries[:100]:
+            assert query.metadata["answer_idx"] == "ABCDE"[query.metadata["label"]]
 
 
 class TestAllAdapters:
