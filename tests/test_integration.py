@@ -169,6 +169,42 @@ class TestPipeline:
         assert all(q.metadata["options"] == {"A": "first", "B": "second"}
                    for q in restored.queries)
 
+    def test_refresh_discards_frozen_task_sets(self, config, fake_dataset):
+        """A task set embeds its own copy of query metadata.
+
+        Leaving one in place after refreshing the corpus feeds the next
+        generation run the metadata that was just replaced, and the run looks
+        entirely normal while doing it.
+        """
+        build = build_corpus(config, "fake", "test")
+        save_corpus(config, build)
+        results = config.paths.results_dir
+        results.mkdir(parents=True, exist_ok=True)
+        stale = results / "generation_tasks_abc123.json"
+        stale.write_text('{"tasks": []}', encoding="utf-8")
+
+        stats = refresh_query_metadata(config, "fake", "test", build.fingerprint)
+
+        assert stats["task_sets_removed"] == 1
+        assert not stale.exists()
+
+    def test_task_sets_go_even_when_the_metadata_was_already_current(
+        self, config, fake_dataset
+    ):
+        """The corpus can be up to date while the task set is stale from elsewhere."""
+        build = build_corpus(config, "fake", "test")
+        save_corpus(config, build)
+        results = config.paths.results_dir
+        results.mkdir(parents=True, exist_ok=True)
+        stale = results / "generation_tasks_def456.json"
+        stale.write_text('{"tasks": []}', encoding="utf-8")
+
+        stats = refresh_query_metadata(config, "fake", "test", build.fingerprint)
+
+        assert stats["updated"] == 0, "nothing to change in the corpus itself"
+        assert stats["task_sets_removed"] == 1, "the task set must still go"
+        assert not stale.exists()
+
     def test_refresh_refuses_when_the_evidence_itself_changed(self, config, fake_dataset):
         """Rewriting there would invalidate results already in the database."""
         build = build_corpus(config, "fake", "test")

@@ -143,6 +143,13 @@ Config is `config/default.yaml`. Paths relocate via `RAGBENCH_DATASETS_DIR` and
   CUAD from 510 documents to 1. Use it only for smoke tests, never on a real run.
 - **Never point SQLite at a Google Drive FUSE mount.** Use the online backup API
   (`source.backup(target)`) to sync a copy instead.
+- **Query metadata is cached in two places.** A corpus stores `queries.jsonl`,
+  and a frozen task set (`artifacts/results/generation_tasks_*.json`) embeds its
+  own snapshot of the same metadata. Refreshing only the first produces a run
+  that silently uses the old metadata and looks entirely normal — this cost a
+  started generation run once. `refresh-query-metadata` now deletes task sets
+  unconditionally, and the notebook clears Drive's copies too and refuses to
+  generate against a task set missing the multiple-choice options.
 - **Do not delete** anything in `datasets/`, `venv/`, `artifacts/corpora/`, or
   `artifacts/indexes/`. The corpora and indexes are ~711 MB and expensive to rebuild.
 

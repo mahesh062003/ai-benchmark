@@ -226,6 +226,16 @@ def refresh_query_metadata(
     first and any disagreement raises rather than being written, because a
     silent change there would invalidate the retrieval results already in the
     database. Documents, chunks and qrels are not touched at all.
+
+    Frozen generation task sets are deleted, always, whether or not anything
+    changed here. A task set embeds its own copy of each query's metadata, so
+    it is a second cache of exactly what this function edits: refreshing the
+    corpus and leaving the task set in place produces a run that silently uses
+    the old metadata and looks completely normal while doing so. They are
+    unconditionally removed rather than removed-when-changed because the task
+    set may be stale from an earlier machine even when this corpus is already
+    current. Rebuilding one costs a retrieval pass over the sampled queries;
+    getting this wrong costs an entire generation run.
     """
     directory = build_directory(config, dataset, split, fingerprint)
     path = directory / "queries.jsonl"
@@ -263,7 +273,13 @@ def refresh_query_metadata(
 
     if changed:
         _write_jsonl(path, rows)
-    return {"queries": len(rows), "updated": changed}
+
+    removed = 0
+    for stale in config.paths.results_dir.glob("generation_tasks_*.json"):
+        stale.unlink()
+        removed += 1
+
+    return {"queries": len(rows), "updated": changed, "task_sets_removed": removed}
 
 
 def save_corpus(config: Config, build: CorpusBuild) -> Path:

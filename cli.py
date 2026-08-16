@@ -963,6 +963,7 @@ def refresh_query_metadata_command(
     for column in ("dataset", "split", "queries", "updated"):
         table.add_column(column, justify="right" if column != "dataset" else "left")
     total = 0
+    task_sets = 0
     for dataset, split, fingerprint in builds:
         try:
             stats = refresh_query_metadata(cfg, dataset, split, fingerprint)
@@ -970,6 +971,7 @@ def refresh_query_metadata_command(
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1)
         total += stats["updated"]
+        task_sets += stats["task_sets_removed"]
         updated = (
             f"[green]{stats['updated']}[/green]" if stats["updated"] else "[dim]0[/dim]"
         )
@@ -979,6 +981,13 @@ def refresh_query_metadata_command(
         f"[dim]{total} queries updated. Documents, chunks and qrels untouched, so "
         "existing retrieval results remain valid.[/dim]"
     )
+    if task_sets:
+        console.print(
+            f"[yellow]discarded {task_sets} frozen generation task set(s)[/yellow] — "
+            "each embeds its own copy of query metadata, so keeping one would feed "
+            "the next run the metadata this command just replaced. The next "
+            "generate-all rebuilds it."
+        )
 
 
 def _latest_generation_run(connection) -> Optional[str]:
