@@ -343,6 +343,7 @@ retrieval/            base, bm25, dense, hybrid (RRF)
 
 evaluation/
 ├── metrics.py        Recall@K / MRR / nDCG@K with NULL semantics
+├── significance.py   Wilcoxon + bootstrap CI + Holm-Bonferroni correction
 ├── faithfulness.py   RAGAS faithfulness against a local LLM judge
 ├── hallucination.py  NLI cross-encoder: unsupported-sentence rate
 └── _shared.py        sentence splitting + JSON recovery used by both
@@ -352,7 +353,15 @@ generation/
 └── runner.py         multi-model sweep: frozen task set, resume, model probe
 
 dashboard/app.py      Streamlit: retrieval + generation tables and charts
+notebooks/            Colab notebook for the GPU generation + scoring stage
 cli.py                Typer CLI — the single entry point
+
+artifacts/            generated; only results/*.csv are committed
+├── corpora/          built corpora + qrels        (git-ignored, ~352 MB)
+├── indexes/          FAISS + BM25 indexes         (git-ignored, ~359 MB)
+├── backups/          compressed database snapshots (git-ignored)
+├── benchmark.sqlite  every result, all runs       (git-ignored, ~343 MB)
+└── results/          aggregates.csv, significance.csv  ← committed
 ```
 
 **The data flow, which is also the traceability chain:**
@@ -417,25 +426,56 @@ FROM aggregate_metrics ORDER BY dataset, method;
 
 ---
 
-## Verified smoke results
+## Results
 
-Query samples, not the full experiment — reported to show the pipeline works
-end to end and produces plausible, non-degenerate numbers.
-**Read down a column (strategies within a dataset), not across rows.**
+The full experiment, no sampling: **29,234 queries** across six datasets and
+three strategies, plus **7,200 generated answers** from four models.
+**Read down a column (strategies within a dataset), not across rows** — the
+datasets differ in difficulty and in how their ground truth was built, so
+cross-dataset comparison is meaningless.
 
-| Dataset | Class | Scoreable | Coverage | BM25 R@10 | Dense R@10 | Hybrid R@10 |
-|---|---|---|---|---|---|---|
-| CUAD | GOLD | 231/820 | 0.28 | 0.6926 | 0.6839 | **0.7078** |
-| CaseHOLD | DERIVED | 200/200 | 1.00 | 0.4250 | 0.5350 | **0.6050** |
-| PubMedQA | DERIVED | 200/200 | 1.00 | 0.7050 | **0.8350** | 0.8000 |
-| MedQA | UNSUPPORTED | 0/50 | 0.00 | **NULL** | **NULL** | **NULL** |
-| QASPER | GOLD | 116/127 | 0.91 | 0.5080 | **0.5975** | 0.5919 |
-| SciQ | DERIVED | 174/200 | 0.87 | 0.9828 | 0.9655 | **0.9885** |
+| Dataset | Class | Scoreable | Coverage | BM25 R@10 | Dense R@10 | Hybrid R@10 | Winner (Holm-corrected) |
+|---|---|---|---|---|---|---|---|
+| CUAD | GOLD | 6,702/20,910 | 0.32 | 0.5852 | 0.6094 | **0.6158** | hybrid |
+| CaseHOLD | DERIVED | 3,600/3,600 | 1.00 | 0.3286 | 0.3694 | **0.4153** | hybrid |
+| PubMedQA | DERIVED | 1,000/1,000 | 1.00 | 0.7349 | **0.8341** | 0.8118 | dense |
+| MedQA | UNSUPPORTED | 0/1,273 | 0.00 | **NULL** | **NULL** | **NULL** | not testable |
+| QASPER | GOLD | 1,309/1,451 | 0.90 | 0.5877 | 0.6509 | **0.6671** | dense ≈ hybrid |
+| SciQ | DERIVED | 884/1,000 | 0.88 | 0.9740 | 0.9649 | **0.9774** | bm25 ≈ hybrid |
 
-The pattern is already the substance of the research question: hybrid wins on
-legal, dense on medical and scientific evidence retrieval, and BM25 is
-competitive only on SciQ — the dataset whose construction guarantees lexical
-overlap. MedQA is NULL throughout, exactly as intended.
+Every "winner" above survives a paired Wilcoxon signed-rank test with
+Holm-Bonferroni correction within each dataset × metric family; `≈` marks pairs
+whose difference is *not* distinguishable from sampling noise (QASPER
+dense–hybrid, p = 0.057; SciQ bm25–hybrid, p = 0.257). The full 45 comparisons,
+with effect sizes and bootstrap confidence intervals, are in
+`artifacts/results/significance.csv`.
+
+The pattern is the substance of the research question: hybrid retrieval wins on
+both legal datasets, dense wins on PubMedQA, and BM25 is competitive only on
+SciQ — the dataset whose construction guarantees lexical overlap between
+question and evidence. MedQA is NULL throughout, exactly as intended: it has no
+retrieval ground truth, so it is reported as unmeasured rather than as zero.
+
+### Generation
+
+Answer quality was measured two ways, and **they disagree**:
+
+| Model | Faithfulness (mistral-judged, n=1,679) | Hallucination (NLI, n=7,033) |
+|---|---|---|
+| mistral | **0.6350** | 0.7904 |
+| llama3.1 | 0.6142 | 0.8215 |
+| gemma2 | 0.6003 | **0.7024** |
+| qwen2.5 | 0.5945 | 0.7455 |
+
+The judge model ranks itself first on the metric it controls and third on the
+independent one. This is reported rather than resolved — see *Limitations*.
+
+### Reading the results without re-running anything
+
+`artifacts/results/*.csv` are committed to this repository, so the headline
+numbers are readable without rebuilding a 700 MB corpus or re-running a
+multi-day benchmark. The SQLite database itself is not committed: it is 343 MB
+and reproducible from the documented commands.
 
 ---
 
@@ -474,6 +514,23 @@ Summarised here; argued in full in [docs/METHODOLOGY.md §11](docs/METHODOLOGY.m
     rate is an *ungroundedness* rate, not a count of false statements.
 11. **PubMedQA and CUAD use single splits** because no official split ships in
     this distribution.
+12. **The faithfulness judge is also one of the models under test.** mistral
+    rates every model's answers and scores highest on faithfulness (0.6350),
+    while the independent NLI measure places it third (0.7904) and ranks gemma2
+    first (0.7024). The two instruments nearly invert. Some divergence is
+    expected — they ask different questions — but the judge topping its own
+    metric is the signature of self-preference bias, so cross-model claims in
+    this study lean on hallucination, which uses a supervised model with no
+    stake in the outcome and covers 7,033 answers rather than 1,679.
+13. **No significance testing on the generation half.** The 45 corrected
+    comparisons cover retrieval only; differences in faithfulness and
+    hallucination between models are reported as means without paired tests, so
+    they should be read as descriptive, not as established differences.
+14. **CaseHOLD has no correctness measure.** Its multiple-choice answers are
+    not parsed back into a selected option, so `choice_acc` is NULL and
+    `exact_match` is 0.000. The 0.000 reflects the absence of exact string
+    matches against a free-text reference, not measured incorrectness, and no
+    accuracy claim is made for CaseHOLD generation.
 
 ---
 

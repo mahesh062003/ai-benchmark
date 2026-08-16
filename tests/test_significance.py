@@ -13,6 +13,7 @@ import sqlite3
 import numpy as np
 import pytest
 
+from cli import _latest_retrieval_run
 from evaluation.significance import (
     Comparison,
     align,
@@ -196,3 +197,44 @@ class TestRunComparisons:
         assert run_comparisons(
             database, "r1", ["medqa"], ["bm25", "dense"], [("recall", 10)], resamples=100
         ) == []
+
+
+class TestDefaultRunSelection:
+    """Which run `significance` tests when the user does not pass --run.
+
+    Once a database has reached the generation stage its newest run is a
+    generation run, which writes a `runs` row but no query_metrics. Selecting
+    it would report "nothing to test" on a database full of perfectly testable
+    retrieval results, so the default has to skip past it.
+    """
+
+    @pytest.fixture
+    def with_runs(self, database):
+        database.execute("CREATE TABLE runs (run_id TEXT, created_at TEXT, stage TEXT)")
+        return database
+
+    @staticmethod
+    def _add_run(connection, run_id, created_at, stage):
+        connection.execute("INSERT INTO runs VALUES (?,?,?)", (run_id, created_at, stage))
+
+    def test_skips_a_newer_run_that_has_no_retrieval_metrics(self, with_runs):
+        self._add_run(with_runs, "r1", "2026-08-14T00:00:00+00:00", "retrieval-batch")
+        self._add_run(with_runs, "genall-1", "2026-08-15T00:00:00+00:00", "generation-multi-model")
+        add(with_runs, "d", "bm25", "q1", 0.5, 0.5)  # belongs to r1
+
+        assert _latest_retrieval_run(with_runs) == "r1"
+
+    def test_prefers_the_most_recent_run_that_does_have_metrics(self, with_runs):
+        self._add_run(with_runs, "old", "2026-08-01T00:00:00+00:00", "retrieval-batch")
+        self._add_run(with_runs, "r1", "2026-08-14T00:00:00+00:00", "retrieval-batch")
+        with_runs.execute(
+            "INSERT INTO query_metrics VALUES ('old','d','bm25','q1',1,1,0.5,'{}','')"
+        )
+        add(with_runs, "d", "bm25", "q1", 0.5, 0.5)  # belongs to r1, the newer run
+
+        assert _latest_retrieval_run(with_runs) == "r1"
+
+    def test_returns_none_when_no_run_has_metrics(self, with_runs):
+        self._add_run(with_runs, "genall-1", "2026-08-15T00:00:00+00:00", "generation-multi-model")
+
+        assert _latest_retrieval_run(with_runs) is None

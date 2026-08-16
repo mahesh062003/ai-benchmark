@@ -703,6 +703,21 @@ def inspect_command(
             console.print(f"       [dim]{chunk.text[:150].strip()}[/dim]")
 
 
+def _latest_retrieval_run(connection) -> Optional[str]:
+    """The most recent run that has per-query retrieval metrics, or None.
+
+    Deliberately not "the most recent run": a generation or scoring pass writes
+    a `runs` row but no `query_metrics`, so on a database that has reached the
+    generation stage the newest run has nothing to test.
+    """
+    row = connection.execute(
+        "SELECT run_id FROM runs"
+        " WHERE run_id IN (SELECT DISTINCT run_id FROM query_metrics)"
+        " ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
+
+
 @app.command("significance")
 def significance_command(
     run: Optional[str] = typer.Option(None, "--run", help="Run to test. Defaults to the latest."),
@@ -735,12 +750,9 @@ def significance_command(
 
     with open_database(cfg) as database:
         connection = database.connection
-        run_id = run or (
-            connection.execute("SELECT run_id FROM runs ORDER BY created_at DESC LIMIT 1").fetchone()
-            or [None]
-        )[0]
+        run_id = run or _latest_retrieval_run(connection)
         if run_id is None:
-            console.print("[yellow]no runs in the database[/yellow]")
+            console.print("[yellow]no run in the database has retrieval metrics to test[/yellow]")
             raise typer.Exit(code=1)
 
         # Only datasets with scoreable queries can be tested at all.

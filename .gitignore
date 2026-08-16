@@ -1,7 +1,14 @@
-# Generated experiment artefacts (corpora, indexes, results, SQLite databases).
-# These are reproducible from the datasets via the documented commands and are
-# far too large to version.
-artifacts/
+# Generated experiment artefacts. Corpora, indexes, the SQLite database and the
+# compressed backups are hundreds of megabytes and are reproducible from the
+# datasets via the documented commands, so they stay out of the repository.
+#
+# The result tables are the exception: they are a few kilobytes, they are what
+# the dissertation actually reports, and a reader should be able to see the
+# headline numbers without first re-running a multi-day benchmark.
+artifacts/*
+!artifacts/results/
+artifacts/results/*
+!artifacts/results/*.csv
 
 # Research data is supplied separately and must never be modified or committed.
 datasets/
@@ -20,8 +27,9 @@ dist/
 .coverage
 htmlcov/
 
-# Editors / OS
+# Editors / OS / local tool settings
 .vscode/
 .idea/
+.claude/
 .DS_Store
 Thumbs.db
