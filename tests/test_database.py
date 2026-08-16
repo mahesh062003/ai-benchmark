@@ -26,6 +26,33 @@ def make_run(database, config, run_id="run-1", dataset="cuad"):
     )
 
 
+class TestConcurrency:
+    def test_journal_mode_is_wal(self, database):
+        """A long sweep is backed up while it writes.
+
+        Copying this database to Google Drive holds a read lock for minutes.
+        Under the default rollback journal that blocks the writer and the
+        commit eventually fails with "database is locked", ending a run that
+        may be hours in. WAL lets the reader and the writer proceed together.
+        """
+        mode = database.connection.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal"
+
+    def test_a_reader_does_not_block_a_writer(self, database, config):
+        """The exact shape of the failure: backup reads while generation writes."""
+        import sqlite3
+
+        reader = sqlite3.connect(f"file:{database.path}?mode=ro", uri=True)
+        try:
+            reader.execute("BEGIN")
+            reader.execute("SELECT count(*) FROM runs").fetchone()
+            make_run(database, config)          # must not raise "database is locked"
+        finally:
+            reader.close()
+
+        assert len(database.runs()) == 1
+
+
 class TestRuns:
     def test_created_run_is_retrievable(self, database, config):
         make_run(database, config)

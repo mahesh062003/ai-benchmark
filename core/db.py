@@ -216,6 +216,19 @@ class Database:
         # Long generation sweeps hold this database for hours, so wait for a
         # busy writer instead of failing the moment one is mid-commit.
         self.connection.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_SECONDS * 1000)}")
+        # Readers must not block writers. Backing this database up to Google
+        # Drive holds a read lock for as long as the copy takes, and copying
+        # several hundred megabytes over a FUSE mount takes minutes -- longer
+        # than any busy timeout worth setting. Under the default rollback
+        # journal that stalls the sweep and eventually fails a commit with
+        # "database is locked", which ends the run rather than one answer. In
+        # WAL a reader and a writer proceed concurrently, so the periodic
+        # backup and the sweep stop contending.
+        #
+        # WAL is unsafe on a network filesystem. This is correct only because
+        # the live database is always on local disk; only the copy goes to
+        # Drive.
+        self.connection.execute("PRAGMA journal_mode = WAL")
         self._migrate_generations()
         try:
             self.connection.executescript(SCHEMA)
