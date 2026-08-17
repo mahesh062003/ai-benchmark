@@ -570,14 +570,19 @@ Summarised here; argued in full in [docs/METHODOLOGY.md §11](docs/METHODOLOGY.m
     rate is an *ungroundedness* rate, not a count of false statements.
 11. **PubMedQA and CUAD use single splits** because no official split ships in
     this distribution.
-12. **The judge leaves about a quarter of its verdicts unusable.** phi3 returned
-    output the parser could not read for roughly 26% of the answers it was
-    given, so the faithfulness sample delivered 2,140 scores rather than the
-    2,880 requested. The failures are not spread evenly across models, which
-    drops the paired overlap to 79%: each comparison is paired on the questions
-    both models were successfully judged on and discards the rest. A larger
-    judge would fail less often, at the cost of the independence and the speed
-    that motivated this one.
+12. **The judge leaves a quarter of its verdicts unusable, but not selectively.**
+    phi3 returned output the parser could not read for **724 of the 2,864
+    answers** it was given (25.3%), so the sample delivered 2,140 scores. The
+    rate varies sharply by dataset — MedQA 42.9%, SciQ 31.3%, CUAD 23.1%,
+    CaseHOLD 12.8% — and comparisons are made within a dataset, so that
+    variation does not distort them. Across *models* the rate is flat: 24.4% to
+    27.0%, and a chi-squared test finds no association between failure and which
+    model wrote the answer (χ² = 1.46, df = 3, p = 0.69). The missing scores are
+    therefore missing at random with respect to the comparison being made: **the
+    attrition costs statistical power, not validity.** It also explains the 79%
+    pairwise overlap, which is what independent 25% loss predicts (75%). A larger
+    judge would fail less, at the cost of the independence and speed that
+    motivated this one.
 13. **Faithfulness resolves less than hallucination.** Six of 36 faithfulness
     comparisons reach significance against 17 of 36 for hallucination, because
     faithfulness is measured on a subsample of about 535 answers per model

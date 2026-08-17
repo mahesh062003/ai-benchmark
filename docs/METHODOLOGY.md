@@ -448,11 +448,27 @@ answers each. `paired_sample` therefore chooses the *questions* first and takes
 every model's answer to each, spending the same budget on a comparison that is
 paired by construction. Only questions answered by all models are eligible.
 
-**Expect attrition.** A judge that returns unreadable output leaves the row
-NULL, and those failures do not fall on the same questions for every model, so
-a sample drawn perfectly paired arrives with less than perfect overlap. In the
-reported run phi3 failed on roughly 26% of what it was given: two passes
-requesting 1,440 each delivered 2,140 usable scores at 79% pairwise overlap.
+**Expect attrition, and check whether it is selective.** A judge that returns
+unreadable output leaves the row NULL, and those failures do not fall on the
+same questions for every model, so a sample drawn perfectly paired arrives with
+less than perfect overlap. In the reported run phi3 failed on 724 of the 2,864
+answers it was given (25.3%), delivering 2,140 usable scores at 79% pairwise
+overlap — close to the 75% that independent 25% loss predicts.
+
+Whether that matters depends entirely on *what* the failures depend on. Here
+they vary strongly by dataset (MedQA 42.9%, SciQ 31.3%, CaseHOLD 12.8%), which
+is harmless because every comparison is made within a dataset. Across models the
+rate is flat — 24.4% to 27.0%, χ²(3) = 1.46, p = 0.69 — so failure is unrelated
+to which model produced the answer. The scores are missing at random with
+respect to the comparison being made, and the attrition therefore costs power
+rather than validity.
+
+Had the rate differed by model, the surviving sample would have been a biased
+one and the comparison would not have been salvageable by pairing. This is worth
+re-checking whenever the judge changes: the query is one `GROUP BY model` over
+rows where `faithfulness_judge` is set and `faithfulness` is NULL, because an
+attempted-and-failed judgement is recorded, not silently dropped.
+
 Each comparison is then paired on the questions both models were successfully
 judged on, provided that majority survives
 (`evaluation.significance.PAIRED_OVERLAP_THRESHOLD`).
