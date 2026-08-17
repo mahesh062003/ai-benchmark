@@ -280,10 +280,20 @@ GENERATION_MEASURES = ("faithfulness", "hallucination")
 #: this backwards would invert every conclusion drawn from it.
 HIGHER_IS_BETTER = {"faithfulness": True, "hallucination": False}
 
-#: Two samples are treated as paired only when they nearly cover the same
-#: units. Below this the paired test would be describing a small and
-#: unrepresentative subset of what was actually measured.
-PAIRED_OVERLAP_THRESHOLD = 0.8
+#: Two samples are tested paired when they share the majority of their units.
+#:
+#: The rule is "keep more than you discard". Pairing uses only the questions
+#: both models were judged on, so above this the paired test keeps most of each
+#: sample and buys the variance reduction that makes it powerful; below it, more
+#: is thrown away than kept and the surviving subset is small enough to be
+#: unrepresentative, which is when the unpaired test on the full samples is the
+#: better answer.
+#:
+#: The judge in this study leaves about a quarter of its verdicts unparseable,
+#: and those failures do not land on the same questions for every model, so a
+#: sample drawn perfectly paired arrives at roughly 79% overlap. That is a
+#: paired comparison with some attrition, not an unpaired one.
+PAIRED_OVERLAP_THRESHOLD = 0.6
 
 
 @dataclass

@@ -221,9 +221,17 @@ def read_tables(db_path: str, mtime: float):
             connection,
         )
         try:
+            # Only the latest generation run. The database keeps earlier runs as
+            # a record, and they were judged by a different model -- pooling
+            # them would average two judges into a single faithfulness number
+            # that measures nothing.
             generations = pd.read_sql_query(
-                "SELECT run_id, dataset, method, model, faithfulness, hallucination"
-                "  FROM generations",
+                "SELECT run_id, dataset, method, model, faithfulness, hallucination,"
+                "       choice_correct"
+                "  FROM generations WHERE run_id = ("
+                "    SELECT run_id FROM runs"
+                "     WHERE run_id IN (SELECT DISTINCT run_id FROM generations)"
+                "     ORDER BY created_at DESC LIMIT 1)",
                 connection,
             )
         except pd.errors.DatabaseError:
@@ -417,10 +425,13 @@ def generation_summary(generations: pd.DataFrame) -> pd.DataFrame:
     fabricated floor.
     """
     if generations.empty:
-        return pd.DataFrame(columns=["dataset", "method", "domain", "faithfulness", "hallucination"])
+        return pd.DataFrame(columns=["dataset", "method", "domain", "faithfulness",
+                                     "hallucination", "choice_correct"])
     grouped = (
         generations.groupby(["dataset", "method"], as_index=False)
-        .agg(faithfulness=("faithfulness", "mean"), hallucination=("hallucination", "mean"))
+        .agg(faithfulness=("faithfulness", "mean"),
+             hallucination=("hallucination", "mean"),
+             choice_correct=("choice_correct", "mean"))
     )
     grouped["domain"] = grouped["dataset"].map(DATASET_DOMAIN).fillna("unknown")
     return grouped
@@ -796,9 +807,11 @@ def fmt(value: Optional[float], good_low=False) -> str:
 
 def results_table(retrieval: pd.DataFrame, generation: pd.DataFrame, k: int) -> str:
     merged = retrieval.merge(
-        generation[["dataset", "method", "faithfulness", "hallucination"]],
+        generation[["dataset", "method", "faithfulness", "hallucination", "choice_correct"]],
         on=["dataset", "method"], how="left",
-    ) if not generation.empty else retrieval.assign(faithfulness=None, hallucination=None)
+    ) if not generation.empty else retrieval.assign(
+        faithfulness=None, hallucination=None, choice_correct=None
+    )
 
     merged["__d"] = merged["domain"].map({d: i for i, d in enumerate(DOMAIN_ORDER)}).fillna(9)
     merged["__m"] = merged["method"].map({m: i for i, m in enumerate(METHOD_ORDER)}).fillna(9)
@@ -807,7 +820,7 @@ def results_table(retrieval: pd.DataFrame, generation: pd.DataFrame, k: int) -> 
     head = (
         "<tr><th>Domain</th><th>Dataset</th><th>Strategy</th>"
         f"<th>Recall@{k}</th><th>MRR</th><th>NDCG</th>"
-        "<th>Faithfulness</th><th>Hallucination</th></tr>"
+        "<th>Choice acc</th><th>Faithfulness</th><th>Hallucination</th></tr>"
     )
     body = []
     for row in merged.to_dict("records"):
@@ -822,6 +835,7 @@ def results_table(retrieval: pd.DataFrame, generation: pd.DataFrame, k: int) -> 
             f"<td>{fmt(row.get('recall'))}</td>"
             f"<td>{fmt(row.get('mrr'))}</td>"
             f"<td>{fmt(row.get('ndcg'))}</td>"
+            f"<td>{fmt(row.get('choice_correct'))}</td>"
             f"<td>{fmt(row.get('faithfulness'))}</td>"
             f"<td>{fmt(row.get('hallucination'), good_low=True)}</td></tr>"
         )

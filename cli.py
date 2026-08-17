@@ -595,14 +595,24 @@ def dashboard_command(
 
 @app.command("results")
 def results_command(
-    run: Optional[str] = typer.Option(None, "--run"),
+    run: Optional[str] = typer.Option(
+        None, "--run", help="Restrict both tables to one run. Defaults to the latest of each."
+    ),
     config: Optional[str] = ConfigOption,
 ) -> None:
-    """Show aggregate metrics for retrieval and, when present, generation."""
+    """Show aggregate metrics for retrieval and, when present, generation.
+
+    The two halves come from different runs -- retrieval is measured once and
+    generation several times over it -- so with no ``--run`` each table shows
+    its own latest. That matters: pooling generation runs averages answers
+    judged by different judges into one number, which is not a measurement of
+    anything.
+    """
     cfg = _load(config)
     with open_database(cfg) as database:
-        _print_results(database, run)
-        _print_generation_results(database, None)
+        _print_results(database, run or _latest_retrieval_run(database.connection))
+        generation_run = run or _latest_generation_run(database.connection)
+        _print_generation_results(database, generation_run)
 
 
 def _print_results(database, run: Optional[str]) -> None:
@@ -634,7 +644,9 @@ def _print_generation_results(database, run: Optional[str]) -> None:
     rows = database.generation_aggregates(run)
     if not rows:
         return
-    table = Table(title="Generation results by model")
+    table = Table(
+        title=f"Generation results by model{f' (run {run})' if run else ''}"
+    )
     for column in ("dataset", "method", "model", "answered", "errors",
                    "choice acc", "exact match", "faithfulness", "hallucination", "latency"):
         table.add_column(column)

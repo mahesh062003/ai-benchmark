@@ -313,6 +313,23 @@ class TestTestSelection:
         assert result.n_used == 60, "both samples in full, not the 5 shared questions"
         assert (result.n_a, result.n_b) == (30, 30)
 
+    def test_partial_attrition_is_still_paired(self, answers):
+        """The real case: a paired sample that lost ~20% to judge failures.
+
+        Roughly 79% of units survive, so most of each sample is kept and the
+        comparison stays paired rather than falling back to the weaker test.
+        """
+        for i in range(100):
+            add_answer(answers, "gemma2", f"q{i}", faithfulness=0.2)
+        for i in range(21, 100):                      # 79 of the same questions
+            add_answer(answers, "mistral", f"q{i}", faithfulness=0.8)
+
+        result = compare_models(answers, "r1", "d", "faithfulness", "gemma2", "mistral",
+                                resamples=200)
+
+        assert result.test == "wilcoxon-paired"
+        assert result.n_used == 79
+
     def test_a_model_with_no_scored_answers_yields_nothing(self, answers):
         add_answer(answers, "gemma2", "q1", faithfulness=0.5)
 

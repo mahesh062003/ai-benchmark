@@ -24,20 +24,26 @@ These override convenience, speed, and any instruction to "just get it working".
 
 ## Current state — the experiment is finished
 
-All results live in `artifacts/benchmark.sqlite` (~360 MB, integrity verified).
+All results live in `artifacts/benchmark.sqlite` (~430 MB, integrity verified).
+
+**The reported generation run is `genall-e11cbda88824`.** Earlier runs are kept
+in the same database as a record and must never be pooled with it: they used a
+different judge, and one of them predates the multiple-choice fix. Every
+generation command takes `--run`; use it.
 
 | | |
 |---|---|
-| Retrieval | 29,234 queries, 821,256 retrieval results, 87,702 query metrics |
-| Generation | 7,200 answers, zero empty (6 datasets x 3 strategies x 4 models x 100 queries) |
-| Hallucination (NLI) | 7,033 scored |
-| Faithfulness (LLM judge) | 1,679 scored — stratified, 72 cells |
-| Significance | 45 Holm-corrected retrieval comparisons in `artifacts/results/significance.csv` |
+| Retrieval — `bench-187f7d53ced2` | 29,234 queries, 821,256 results, 87,702 query metrics |
+| Generation — `genall-e11cbda88824` | 7,200 answers, zero empty |
+| Hallucination (NLI) | 7,048 scored |
+| Faithfulness (judge phi3) | 2,140 scored, 79% pairwise overlap |
+| Choice accuracy | 3,600 — CaseHOLD, MedQA, SciQ |
+| Significance | 45 retrieval + 72 generation comparisons, Holm-corrected |
 
 Datasets: CUAD, CaseHOLD (legal) · MedQA, PubMedQA (medical) · QASPER, SciQ (scientific).
 Strategies: BM25, dense (FAISS + all-MiniLM-L6-v2), hybrid (RRF, k=60).
 Models: llama3.1, gemma2, mistral, qwen2.5 — temperature 0.0, frozen task sets so
-every model sees byte-identical context.
+every model sees byte-identical context. Judge: phi3, outside that set.
 
 **No further Colab or GPU work is required.** Everything remaining reads the
 existing database on CPU.
@@ -51,10 +57,12 @@ existing database on CPU.
 `artifacts/results/significance.csv` and `significance_generation.csv`, both
 committed.
 
-The generation side chooses its test per comparison and records which it used:
-hallucination is scored for every answer, so models are paired on the same
-(strategy, query) units; faithfulness is a subsample drawn independently per
-cell with only ~20% overlap between models, so it uses unpaired Mann-Whitney U.
+The generation side chooses its test per comparison and records which it used.
+All 72 currently run paired, because `paired_sample` draws the faithfulness
+subsample on questions shared by every model. It falls back to unpaired
+Mann-Whitney U only when overlap drops below `PAIRED_OVERLAP_THRESHOLD` (0.6 —
+"keep more than you discard").
+
 Direction is per measure — lower hallucination is better, higher faithfulness is
 better — via `HIGHER_IS_BETTER` in `evaluation/significance.py`. Inverting that
 would reverse every conclusion, so it is covered by tests.
@@ -77,39 +85,23 @@ were measured against the cached queries. It has been run: CaseHOLD and SciQ
 now carry options, and qrels, documents and chunks hash byte-identically to
 before.
 
-## The second run — staged, not yet executed
-
-Everything needed is committed and tested; only the GPU time is outstanding.
-`notebooks/colab_generation.ipynb` drives it. Three fixes take effect:
-
-| Fix | Where |
-|---|---|
-| Judge is phi3, outside the compared set | `config/default.yaml` |
-| Faithfulness sample shared across models → paired test | `paired_sample` in `generation/runner.py` |
-| CaseHOLD and SciQ supply options → correctness measure | `build_options` in `loaders/base.py` |
-
-Verified on the real data before committing to GPU time: the same 1,440 budget
-moves model-pair overlap from **20.7% to 100%**, with all 72 cells still
-covered.
-
-The run produces a **new run id**; the first run stays in the database as a
-record. Scoring and generation significance are pinned to the new id with
-`--run`, so the two runs never mix — the first used a different judge, and
-averaging across them would be meaningless.
-
-Expect ~12–18 hours: ~5 for generation, the rest for faithfulness at two judge
-calls per answer.
-
 ## Known issues
 
-1. **The reported results predate all three fixes.** README limitations 12–14
-   describe the first run and are accurate for it. Do not rescore existing
-   answers against options the models never saw, and do not mix faithfulness
-   scores from two different judges.
+1. **The judge fails on about a quarter of its verdicts.** phi3 returns
+   unparseable output often enough that two passes requesting 1,440 each
+   delivered 2,140 usable scores, and the pairwise overlap is 79% rather than
+   100%. A larger judge would fail less, at the cost of the independence and
+   speed that motivated phi3.
 
 2. **`score-answers` only fills NULL rows.** Pointing it at a new judge without
    clearing the column first silently scores nothing. `cli reset-scores
-   --column faithfulness --yes` exists for that and refuses without `--yes`.
+   --column faithfulness --run <id> --yes` exists for that and refuses without
+   `--yes`.
+
+3. **Several runs share the database.** `results`, `score-answers` and
+   `significance-generation` all default to the latest of the relevant kind,
+   which is right, but anything written by hand against `generations` must
+   filter on `run_id` or it will average two judges into one number.
 
 ---
 

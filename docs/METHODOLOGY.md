@@ -441,6 +441,22 @@ overall faithfulness average while leaving any model-versus-model comparison
 just as underpowered. NLI hallucination is cheap enough to run over every
 answer, so that comparison is not subsampled at all.
 
+**The sample is drawn on shared questions.** Filling each cell independently
+would leave two models overlapping on only about a fifth of their judged
+questions, which forces an unpaired comparison between models on a few dozen
+answers each. `paired_sample` therefore chooses the *questions* first and takes
+every model's answer to each, spending the same budget on a comparison that is
+paired by construction. Only questions answered by all models are eligible.
+
+**Expect attrition.** A judge that returns unreadable output leaves the row
+NULL, and those failures do not fall on the same questions for every model, so
+a sample drawn perfectly paired arrives with less than perfect overlap. In the
+reported run phi3 failed on roughly 26% of what it was given: two passes
+requesting 1,440 each delivered 2,140 usable scores at 79% pairwise overlap.
+Each comparison is then paired on the questions both models were successfully
+judged on, provided that majority survives
+(`evaluation.significance.PAIRED_OVERLAP_THRESHOLD`).
+
 An unreadable verdict counts as *unsupported*: this can understate faithfulness
 but can never invent support. An answer that decomposes to no factual
 statements ("the context does not answer this") is NULL, not zero — declining

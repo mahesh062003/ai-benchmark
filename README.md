@@ -232,6 +232,7 @@ dashboard still shows every retrieval result.
 ```bash
 ollama serve
 ollama pull llama3.1 && ollama pull gemma2 && ollama pull mistral && ollama pull qwen2.5
+ollama pull phi3                                 # the judge, not one of the four
 
 ./venv/Scripts/python.exe -m cli models          # what the server can serve
 ./venv/Scripts/python.exe -m cli generate-all    # every model x method x dataset
@@ -295,9 +296,11 @@ without regenerating anything.
 - **RAGAS faithfulness** — the published procedure (decompose the answer into
   atomic statements, verify each against the retrieved context, score =
   supported / total) implemented directly against a local Ollama judge. One
-  fixed judge (`scoring.judge_model`) rates every model so no model grades its
-  own homework on a different footing; the judge is recorded per row. Costs two
-  LLM calls per answer.
+  fixed judge (`scoring.judge_model`, phi3) rates every model, and it is
+  deliberately **not one of the models under test** — otherwise a model helps
+  decide its own score. The judge is recorded per row, so answers rated by
+  different judges can never be pooled by accident. Costs two LLM calls per
+  answer, which is why it runs on a subsample.
 - **NLI hallucination** — a cross-encoder
   (`cross-encoder/nli-deberta-v3-base`) scores each answer sentence against
   each retrieved chunk. A sentence is supported when some chunk entails it;
@@ -379,7 +382,7 @@ artifacts/            generated; only results/*.csv are committed
 ├── corpora/          built corpora + qrels        (git-ignored, ~352 MB)
 ├── indexes/          FAISS + BM25 indexes         (git-ignored, ~359 MB)
 ├── backups/          compressed database snapshots (git-ignored)
-├── benchmark.sqlite  every result, all runs       (git-ignored, ~343 MB)
+├── benchmark.sqlite  every result, all runs       (git-ignored, ~430 MB)
 └── results/          aggregates.csv, significance.csv  ← committed
 ```
 
@@ -477,34 +480,47 @@ retrieval ground truth, so it is reported as unmeasured rather than as zero.
 
 ### Generation
 
-Answer quality was measured two ways, and the point estimates disagree:
+Answers are judged by **phi3**, which is deliberately not one of the four models
+under test, so no model rates its own output. All 72 comparisons are paired
+Wilcoxon signed-rank tests, Holm-corrected within each dataset and measure.
 
-| Model | Faithfulness (mistral-judged, n=1,679) | Hallucination (NLI, n=7,033) | Significant hallucination wins |
-|---|---|---|---|
-| mistral | **0.6350** | 0.7904 | 1 |
-| llama3.1 | 0.6142 | 0.8215 | 1 |
-| gemma2 | 0.6003 | **0.7024** | **7** |
-| qwen2.5 | 0.5945 | 0.7455 | 5 |
+| Model | Faithfulness (n≈535) | Hallucination (n≈1,760) | Choice accuracy (n=900) | Significant wins |
+|---|---|---|---|---|
+| gemma2 | 0.6363 | **0.7576** | 0.6611 | **7** |
+| mistral | 0.6539 | 0.7930 | 0.6100 | 5 |
+| qwen2.5 | 0.6458 | 0.7981 | **0.6944** | 6 |
+| llama3.1 | **0.6789** | 0.8408 | 0.6700 | 5 |
 
-The judge model ranks itself first on the metric it controls and third on the
-independent one — but **that ordering does not survive testing**. Of the 18
-faithfulness comparisons involving mistral, exactly one reaches significance
-after correction (CUAD, against gemma2, p = 0.038). The apparent self-preference
-is visible in the means and absent from the statistics, so this study reports it
-as unresolved rather than as evidence of bias.
+**The two measures disagree, and now that disagreement means something.**
+llama3.1 is judged most faithful and is simultaneously the *most* ungrounded on
+the independent NLI measure. With the judge outside the model set, that can no
+longer be explained by a conflict of interest — the two instruments are
+measuring different things. Faithfulness asks whether the statements a model
+makes are supported; hallucination asks what fraction of its sentences the
+context entails. A model that writes fewer, better-hedged claims scores well on
+the first and can still score badly on the second.
 
-Hallucination is a different picture: 14 of 36 comparisons are significant, and
-gemma2 wins 7 of them — more than any other model. **gemma2 is the least
-hallucinating model in this benchmark, and that conclusion is statistically
-supported.** No such conclusion is available for faithfulness.
+Of 72 comparisons, **23 are significant**: 17 of 36 on hallucination and 6 of 36
+on faithfulness. gemma2 wins 7 hallucination comparisons, more than any other
+model, so **gemma2 is the least hallucinating model in this benchmark and that
+conclusion is statistically supported.** Faithfulness is more evenly split and
+supports no overall ranking.
 
-Full results in `artifacts/results/significance_generation.csv` (72 comparisons).
+Correctness, available for the three multiple-choice datasets:
+
+| Dataset | Choice accuracy | Chance |
+|---|---|---|
+| SciQ | 0.9342 | 0.25 |
+| CaseHOLD | 0.5367 | 0.20 |
+| MedQA | 0.5058 | 0.20 |
+
+Full results in `artifacts/results/significance_generation.csv`.
 
 ### Reading the results without re-running anything
 
 `artifacts/results/*.csv` are committed to this repository, so the headline
 numbers are readable without rebuilding a 700 MB corpus or re-running a
-multi-day benchmark. The SQLite database itself is not committed: it is 343 MB
+multi-day benchmark. The SQLite database itself is not committed: it is 430 MB
 and reproducible from the documented commands.
 
 ---
@@ -554,42 +570,24 @@ Summarised here; argued in full in [docs/METHODOLOGY.md §11](docs/METHODOLOGY.m
     rate is an *ungroundedness* rate, not a count of false statements.
 11. **PubMedQA and CUAD use single splits** because no official split ships in
     this distribution.
-> Limitations 12–14 describe the results reported above, which come from the
-> first generation run. The framework has since been changed to remove all
-> three — the judge is now phi3, which is outside the compared set; the
-> faithfulness sample is drawn on questions shared by every model, so the
-> comparison is paired; and the multiple-choice loaders supply their options.
-> Those changes take effect on the next generation run and are **not** reflected
-> in the numbers above, which are reported exactly as they were measured.
-
-12. **The faithfulness judge is also one of the models under test.** mistral
-    rates every model's answers and scores highest on faithfulness (0.6350),
-    while the independent NLI measure places it third (0.7904) and ranks gemma2
-    first (0.7024). Testing resolves this only partly: mistral's advantage is
-    significant in 1 of its 18 faithfulness comparisons, so the ordering is not
-    evidence of self-preference — but neither is it evidence of its absence,
-    since the faithfulness sample is too small to detect a modest bias. Using a
-    judge that is not among the models under test would remove the question
-    entirely and is the right design for future work.
-13. **The faithfulness comparisons are unpaired and underpowered.** The
-    stratified subsample was drawn independently within each (dataset, strategy,
-    model) cell, so two models share only about 20% of their judged questions.
-    Pairing on that overlap would discard three quarters of the data, so model
-    comparisons on faithfulness use Mann-Whitney U on the full samples, which is
-    less powerful than the paired test used everywhere else. Only 3 of 36
-    faithfulness comparisons reach significance, against 14 of 36 for
-    hallucination. Drawing the subsample on a shared set of questions would make
-    the paired test available and is a cheap improvement.
-14. **CaseHOLD and SciQ have no correctness measure in the results reported
-    here.** Both are multiple-choice datasets, but only MedQA supplied its
-    candidate options to the generation stage, so both were answered as
-    open-ended questions and `choice_correct` is NULL for them. CaseHOLD's
-    `exact_match` of 0.004 is the rate at which free-text prose happened to
-    equal a holding verbatim; it is not an accuracy figure and is not reported
-    as one. The loaders now supply options for all three multiple-choice
-    datasets, so a future generation run measures all of them — but the answers
-    in this study were produced before that, and are reported as they were
-    measured rather than rescored after the fact.
+12. **The judge leaves about a quarter of its verdicts unusable.** phi3 returned
+    output the parser could not read for roughly 26% of the answers it was
+    given, so the faithfulness sample delivered 2,140 scores rather than the
+    2,880 requested. The failures are not spread evenly across models, which
+    drops the paired overlap to 79%: each comparison is paired on the questions
+    both models were successfully judged on and discards the rest. A larger
+    judge would fail less often, at the cost of the independence and the speed
+    that motivated this one.
+13. **Faithfulness resolves less than hallucination.** Six of 36 faithfulness
+    comparisons reach significance against 17 of 36 for hallucination, because
+    faithfulness is measured on a subsample of about 535 answers per model
+    while hallucination covers every answer. Faithfulness supports no overall
+    ranking of the four models in this study.
+14. **Choice accuracy is not available for CUAD, PubMedQA or QASPER**, which are
+    not multiple-choice tasks, and `exact_match` on the free-text datasets is a
+    weak proxy: it counts normalised string equality, so a correct answer phrased
+    differently scores zero. It is reported because it is checkable, not because
+    it is a good measure of answer quality.
 
 ---
 
