@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from core.settings import PROJECT_ROOT, ChunkConfig, Config, load_config
@@ -212,3 +214,91 @@ class TestGenerationHelpers:
 
     def test_normalise_strips_punctuation(self):
         assert normalise("Yes, indeed!") == "yes  indeed"
+
+
+class TestDeclaredDependencies:
+    """Every third-party import must be installable from requirements.txt.
+
+    scipy was imported by ``evaluation.significance`` for months without being
+    declared. It happened to be present as a transitive dependency of
+    sentence-transformers, so the suite passed and a fresh
+    ``pip install -r requirements.txt`` followed by ``cli significance`` did
+    not. A benchmark that claims reproducibility has to be installable from its
+    own manifest.
+    """
+
+    # Import name -> distribution name, where they differ by more than the
+    # hyphen/underscore equivalence that _normalise already handles.
+    ALIASES = {
+        "yaml": "pyyaml",
+        "faiss": "faiss-cpu",
+        "sklearn": "scikit-learn",
+        "PIL": "pillow",
+        "dateutil": "python-dateutil",
+    }
+
+    @staticmethod
+    def _normalise(name):
+        """PEP 503: rank_bm25 and rank-bm25 are the same distribution."""
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    @classmethod
+    def _declared(cls):
+        text = (PROJECT_ROOT / "requirements.txt").read_text(encoding="utf-8")
+        names = set()
+        for line in text.splitlines():
+            line = line.split("#")[0].strip()
+            if line:
+                names.add(cls._normalise(re.split(r"[=<>~\[!]", line)[0].strip()))
+        return names
+
+    @staticmethod
+    def _third_party_imports():
+        import ast
+        import sys
+
+        stdlib = set(sys.stdlib_module_names)
+        packages = {p.name for p in PROJECT_ROOT.iterdir() if p.is_dir()} | {"cli"}
+        found = {}
+        for path in PROJECT_ROOT.rglob("*.py"):
+            parts = set(path.parts)
+            if parts & {"venv", ".venv", "__pycache__", "build", "dist"}:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    modules = [a.name.split(".")[0] for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    modules = [node.module.split(".")[0]]
+                else:
+                    continue
+                for module in modules:
+                    if module not in stdlib and module not in packages:
+                        found.setdefault(module, path.relative_to(PROJECT_ROOT))
+        return found
+
+    def test_every_import_is_declared(self):
+        declared = self._declared()
+        undeclared = {
+            module: where
+            for module, where in self._third_party_imports().items()
+            if self._normalise(module) not in declared
+            and self._normalise(self.ALIASES.get(module, "")) not in declared
+        }
+        assert not undeclared, (
+            "imported but missing from requirements.txt: "
+            + ", ".join(f"{m} (in {p})" for m, p in sorted(undeclared.items()))
+        )
+
+    def test_requirements_and_pyproject_agree(self):
+        text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        block = text.split("dependencies = [", 1)[1].split("]", 1)[0]
+        pyproject = {
+            self._normalise(re.split(r"[=<>~\[!]", item.strip().strip('",'))[0].strip())
+            for item in block.splitlines() if item.strip().startswith('"')
+        }
+        missing = pyproject - self._declared()
+        assert not missing, f"in pyproject.toml but not requirements.txt: {sorted(missing)}"

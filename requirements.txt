@@ -17,6 +17,7 @@ rank-bm25>=0.2.2         # BM25 sparse retrieval
 faiss-cpu>=1.8           # dense vector index
 sentence-transformers>=3.0
 torch>=2.0
+scipy>=1.11              # Wilcoxon and Mann-Whitney tests in the significance module
 typer>=0.12              # CLI
 rich>=13.0               # console output and logging
 ollama>=0.3              # optional generation stage only
