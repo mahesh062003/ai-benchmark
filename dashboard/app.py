@@ -46,17 +46,22 @@ DATASET_DOMAIN = {name: adapter.spec.domain for name, adapter in ADAPTERS.items(
 # palette
 # ---------------------------------------------------------------------------
 
-BG = "#0F1117"
-SURFACE = "#161A23"
-SURFACE_RAISED = "#1C2130"
-BORDER = "#282E3C"
-TEXT = "#EDF0F6"
-MUTED = "#868FA5"
-GOLD = "#F0A500"
-GOLD_SOFT = "#FFC24B"
-BLUE = "#5B8DEF"
-BLUE_DEEP = "#3B63C4"
-GRID = "#222736"
+# Near-black rather than pure black: #000 against white text sits at maximum
+# contrast, which reads as harsh over a long session and makes thin borders
+# disappear. A few points of lift keeps the surfaces separable.
+BG = "#0A0B0D"
+SURFACE = "#121317"
+SURFACE_RAISED = "#181A1F"
+BORDER = "#26282F"
+TEXT = "#E9EAED"
+MUTED = "#878A93"
+# Amber, desaturated from the earlier #F0A500. A fully saturated accent on a
+# black ground vibrates; this holds the same emphasis without shouting.
+GOLD = "#E0A94A"
+GOLD_SOFT = "#F0C578"
+BLUE = "#6D9BF1"
+BLUE_DEEP = "#3F6BCB"
+GRID = "#1E2026"
 
 # Retrieval reads blue, generation reads gold, so the two halves of the page
 # stay distinguishable at a glance even when charts are viewed side by side.
@@ -77,18 +82,36 @@ METHOD_ORDER = ["bm25", "dense", "hybrid"]
 
 CSS = f"""
 <style>
+  /* Inter for text, JetBrains Mono for figures. Both fall back to a system
+     stack, so the dashboard still looks deliberate with no network. */
+  @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
   .stApp {{ background: {BG}; }}
   header[data-testid="stHeader"] {{ background: transparent; }}
   .block-container {{ padding: 0 2.2rem 3rem; max-width: 1500px; }}
 
   html, body, [class*="css"] {{
-    font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
     color: {TEXT};
+    -webkit-font-smoothing: antialiased;
+  }}
+
+  /* Every figure in a results table is compared against the one above it, so
+     digits must occupy identical width or the columns read as ragged. */
+  .rb-num, .rb-stat-value, .rb-table td {{
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "cv05" 1;
+  }}
+  .rb-num, .rb-stat-value {{
+    font-family: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    letter-spacing: -.01em;
   }}
 
   /* ---------- header band ---------- */
   .rb-header {{
-    background: linear-gradient(105deg, #10131C 0%, #161B29 55%, #1A2033 100%);
+    background:
+      radial-gradient(120% 180% at 0% 0%, #16181E 0%, transparent 60%),
+      linear-gradient(105deg, #0E0F13 0%, #141519 55%, #17191F 100%);
     border: 1px solid {BORDER};
     border-radius: 14px;
     padding: 1.5rem 1.9rem;
@@ -164,11 +187,10 @@ CSS = f"""
   }}
   .rb-table td {{
     padding: .55rem .7rem; font-size: .82rem;
-    border-bottom: 1px solid rgba(40,46,60,.55); color: #D6DCEA;
+    border-bottom: 1px solid rgba(38,40,47,.6); color: #D3D5DA;
   }}
-  .rb-table tr:hover td {{ background: rgba(91,141,239,.05); }}
-  .rb-num {{ font-variant-numeric: tabular-nums; }}
-  .rb-null-cell {{ color: #5A6275; }}
+  .rb-table tr:hover td {{ background: rgba(224,169,74,.045); }}
+  .rb-null-cell {{ color: #5C606B; font-style: italic; }}
   .rb-good {{ color: #34D399; font-weight: 600; }}
   .rb-bad {{ color: #F87171; font-weight: 600; }}
 

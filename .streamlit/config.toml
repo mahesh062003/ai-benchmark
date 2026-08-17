@@ -5,10 +5,10 @@
 
 [theme]
 base = "dark"
-backgroundColor = "#0F1117"
-secondaryBackgroundColor = "#161A23"
-primaryColor = "#F0A500"
-textColor = "#EDF0F6"
+backgroundColor = "#0A0B0D"
+secondaryBackgroundColor = "#121317"
+primaryColor = "#E0A94A"
+textColor = "#E9EAED"
 
 [server]
 headless = true
