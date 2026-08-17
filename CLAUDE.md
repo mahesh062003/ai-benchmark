@@ -117,7 +117,7 @@ retrieval/      bm25, dense, hybrid, chunking, indexing
 generation/     Ollama client, prompt assembly, generator
 evaluation/     metrics, significance, faithfulness, hallucination, _shared
 dashboard/      Streamlit app (dark theme, navy #0F1117 / gold #F0A500)
-tests/          283+ tests, all passing
+tests/          354 tests, all passing
 notebooks/      colab_generation.ipynb — only needed to regenerate answers
 ```
 
