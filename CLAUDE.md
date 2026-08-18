@@ -19,6 +19,12 @@ These override convenience, speed, and any instruction to "just get it working".
 - **Prefer complete runs over sampled ones.** State the time cost, name the
   cheaper option once, then run the full thing. Do not quietly narrow scope.
 - **Generation is optional.** Retrieval benchmarks must never require Ollama.
+- **Leave the tree clean, every time.** When a file is superseded — source,
+  archive, document or deck — delete the old copy rather than leaving it
+  alongside, so there is never ambiguity about which is current. Clean-up is
+  part of finishing a task, not something to offer afterwards. Verify first
+  (tests pass, counts match) and only then remove; never delete real
+  experimental data, corpora or indexes to make a tree look tidy.
 
 ---
 
