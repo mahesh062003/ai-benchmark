@@ -111,6 +111,34 @@ before.
 
 ---
 
+## Assessment deliverables (outside this repository)
+
+CA2 is a 10-minute video: a short spoken introduction, then a live
+demonstration of the software. Two files sit in `C:\Users\mahes\Downloads\` and
+are deliberately not committed, since they are coursework rather than part of
+the framework.
+
+| File | What it is |
+|---|---|
+| `COMP702_CA2_Final.pptx` | 13 slides — 9 spoken (~2:50), 4 appendix for the Q&A. Dark theme, charts generated from `artifacts/benchmark.sqlite`. Full script in the speaker notes. |
+| `COMP702_CA2_Script.docx` | Presenter's document: pre-recording checklist, slide-by-slide script, demo running order, glossary of every term, and answers to likely questions. |
+
+Both quote figures from the database. **If the code or results change, those
+numbers go stale** — the test count in particular has already drifted twice.
+Re-check them against a fresh `pytest` run and the database before recording.
+
+The demo command to show retrieval live, verified at ~5 seconds warm:
+
+```bash
+python cli.py inspect --dataset sciq --method bm25 --limit 2 --top 3 \
+       --config config/default.yaml
+```
+
+Never use `config/smoke.yaml` for that: it reduces corpora and, against the real
+artifacts directory, truncates MedQA to two textbooks.
+
+---
+
 ## Layout
 
 Flat package layout; every module is importable from the repo root.
