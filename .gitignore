@@ -33,3 +33,7 @@ htmlcov/
 .claude/
 .DS_Store
 Thumbs.db
+
+# Coursework deliverables and working drafts. These are assessment artefacts
+# rather than source, and some are large binaries, so they stay out of Git.
+documents/
