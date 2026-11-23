@@ -15,6 +15,32 @@ and the dataset is kept for the evaluation it *does* support.
 
 ---
 
+## Contents
+
+- [Datasets and their ground truth](#datasets-and-their-ground-truth)
+- [The distinction that governs the whole framework](#the-distinction-that-governs-the-whole-framework)
+- [Installation](#installation)
+  - [Expected layout](#expected-layout)
+- [Workflow](#workflow)
+  - [1. Check what is available](#1-check-what-is-available)
+  - [2. Smoke run (verifies the whole pipeline)](#2-smoke-run-verifies-the-whole-pipeline)
+  - [3. Full experiment](#3-full-experiment)
+  - [4. Inspect and export](#4-inspect-and-export)
+  - [5. Generation (optional — needs Ollama)](#5-generation-optional--needs-ollama)
+  - [6. Answer grounding: faithfulness and hallucination (optional)](#6-answer-grounding-faithfulness-and-hallucination-optional)
+  - [7. Dashboard](#7-dashboard)
+  - [8. Tests](#8-tests)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [Results database](#results-database)
+- [Results](#results)
+  - [Generation](#generation)
+  - [Reading the results without re-running anything](#reading-the-results-without-re-running-anything)
+- [Limitations](#limitations)
+- [Citation](#citation)
+
+---
+
 ## Datasets and their ground truth
 
 Determined by direct inspection of the shipped files, not from documentation.
