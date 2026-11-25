@@ -628,3 +628,16 @@ Datasets: CUAD (Hendrycks et al., 2021); CaseHOLD/LexGLUE (Zheng et al., 2021;
 Chalkidis et al., 2022); MedQA (Jin et al., 2020); PubMedQA (Jin et al., 2019);
 QASPER (Dasigi et al., 2021); SciQ (Welbl et al., 2017).
 Method: Reciprocal Rank Fusion (Cormack et al., 2009).
+
+---
+
+## Use
+
+© 2026 Mahesh Veeraiah R. All rights reserved.
+
+Published for review and assessment. Not licensed for reuse, redistribution or
+modification — please get in touch about any other use.
+
+Datasets referenced above are **not included and are not mine**. Each remains
+the property of its provider and is subject to that provider's own licence and
+terms. Obtain them from the sources named, and comply with those terms.
